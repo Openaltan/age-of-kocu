@@ -45,7 +45,7 @@ test('canlı değerlendirme: görsel + şema + yedek model ile istek atar', asyn
   const text = req.messages[0].content[1].text;
   assert.match(text, /Normal mod/);
   assert.match(text, /Görüntüler sırasıyla: 1\) oyuncunun tam ekranı/);
-  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'durum', 'simdiYap', 'uret', 'gelistir', 'dagilim', 'komutlar', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
+  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'durum', 'simdiYap', 'uret', 'gelistir', 'okunanKoylu', 'dagilim', 'komutlar', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
 });
 
 test('yönet modunda istem sıralı komut ister; normal modda komutlar boş', async () => {

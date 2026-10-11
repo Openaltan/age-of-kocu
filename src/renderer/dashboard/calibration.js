@@ -152,6 +152,13 @@ async function test() {
 }
 
 async function save() {
-  await api.saveCalibration({ width: cal.width, height: cal.height, fields: boxes });
-  document.getElementById('cal-msg').textContent = 'Kaydedildi. Bir sonraki maçta ekran okuma devrede.';
+  const msg = document.getElementById('cal-msg');
+  try {
+    const r = await api.saveCalibration({ width: cal.width, height: cal.height, fields: boxes });
+    msg.textContent = `Kaydedildi ✓ (${r.saved} alan diske yazıldı). Bir sonraki maçta ekran okuma devrede.`;
+    msg.className = 'res-win';
+  } catch (err) {
+    msg.textContent = `Kaydedilemedi: ${err.message.replace(/^.*Error: /, '')}`;
+    msg.className = 'res-loss';
+  }
 }

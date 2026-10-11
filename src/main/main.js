@@ -22,6 +22,7 @@ const { mmss } = require('./analysis');
 const { MinimapWatcher, scoreboardRows, PALETTE, hueDist, hsv } = require('./minimap');
 const { LiveMonitor } = require('./liveEvents');
 const { BaseLedger, AGE_NAMES } = require('./baseLedger');
+const logger = require('./log');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const TICK_MS = 500;
@@ -34,6 +35,9 @@ const LIVE_MAX_AUTO_CALLS = 80;
 const LIVE_COMMAND_INTERVAL_MS = 45 * 1000; // yönet modunda sakin anlarda da 45 sn'de bir komut
 const LIVE_MAX_COMMAND_CALLS = 150;
 const LIVE_STUCK_MS = 150 * 1000; // bundan uzun süren çağrı takılmış sayılır
+const LIVE_CALL_TIMEOUT_MS = 100 * 1000; // tek değerlendirmenin (görüntü + YZ) en uzun süresi
+const CAPTURE_TIMEOUT_MS = 8 * 1000;
+const KEEP_GUIDANCE_SEC = 15 * 60; // koç notları yenisi gelene kadar kalır (en fazla 15 dk)
 const IDENTIFY_RETRY_MS = 60 * 1000;
 const IDENTIFY_COOLDOWN_MS = 15 * 1000;
 
@@ -70,8 +74,11 @@ let identifyBusy = false;
 let identifyAt = 0;
 let identifyWanted = false;
 let autoCandidates = null; // "Otomatik" build seçiliyken ülkenin build listesi
-let aiTarget = null; // { target: {food,wood,gold,stone}, at } YZ'nin son hedef köylü dağılımı
+let aiTarget = null; // { dagilim, total, at } YZ'nin son hedef köylü dağılımı (yenisi gelene kadar)
 let liveSeq = 0; // takılan YZ çağrısının geç gelen sonucunu yok saymak için
+let lastLiveOkAt = 0; // son başarılı YZ değerlendirmesi (ms)
+let lastLiveError = null;
+let stepStartedAt = 0; // şimdiki build adımının başladığı maç saniyesi
 const notes = new NoteBoard();
 let hudNotes = [];
 let lastNotesJson = '';
@@ -167,6 +174,7 @@ function useBuild(build) {
 // Otomatik build kararı (YZ ya da kural). Sadece "Otomatik" seçiliyken ve bir kez uygulanır.
 function applyAutoBuild(build, reason, source, extra = {}) {
   if (!autoCandidates || !build || state.buildAuto?.status === 'done') return;
+  console.log(`build seçildi (${source}): ${build.name}${reason ? ` — ${reason}` : ''}`);
   if (build.id !== state.build?.id) useBuild(build);
   state.buildAuto = { status: 'done', mode: state.buildAuto?.mode || 'auto', name: build.name, reason: reason || null, source, ...extra };
   notes.push('auto-build', 'info', `Build: ${build.name}`, 40);
@@ -304,6 +312,16 @@ function disconnectTeam() {
   broadcast('team', null);
 }
 
+// Takım arkadaşlarının son durumu; bozuk veri koçu durdurmasın.
+function liveMates() {
+  try {
+    return team ? team.liveMembers() : [];
+  } catch (err) {
+    console.warn('takım verisi okunamadı:', err.message);
+    return [];
+  }
+}
+
 function teamView() {
   if (!team) return null;
   return { connected: team.connected, members: team.liveMembers().map((m) => ({ id: m.id, name: m.name, status: m.status, ago: Math.round((Date.now() - m.at) / 1000) })) };
@@ -401,6 +419,7 @@ async function runPrematch(match) {
     if (match.matchId) store.saveMatch({ matchId: match.matchId, aiPlan: plan });
     applyPlanBuild(plan);
   } catch (err) {
+    console.warn('maç öncesi plan başarısız:', err.message);
     Object.assign(state.ai, { planStatus: 'error', planError: err.message });
     if (state.match === match) autoBuildByRule();
   }
@@ -411,14 +430,47 @@ async function runPrematch(match) {
 async function freshFrame() {
   const last = screenReader?.lastFrame;
   if (last && Date.now() - last.at < 2000) return last.image;
-  return captureScreen();
+  return withTimeout(captureScreen(), CAPTURE_TIMEOUT_MS, 'Ekran yakalama gecikti');
 }
 
-// YZ'ye gidecek görüntüler: tam ekran (küçültülmüş) ve varsa mini haritanın yakın görüntüsü.
+// Söz verilen süre içinde bitmeyen işi hata olarak sonlandırır (takılan iş koçu susturmasın).
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// Karenin ortalama parlaklığı: tam ekran oyunlarda yakalama siyah dönebilir.
+function meanBrightness(img) {
+  const small = img.resize({ width: 64 });
+  const d = small.toBitmap();
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+  return sum / (d.length / 4);
+}
+
+// YZ'ye gidecek görüntüler: tam ekran (küçültülmüş), sol alttaki kaynak paneli yakın planda
+// (köylü sayıları küçültülmüş ekranda okunamıyor) ve varsa mini haritanın yakın görüntüsü.
 async function liveImages() {
   if (store.settings.aiVision === false) return [];
-  const img = await freshFrame();
+  let img;
+  try {
+    img = await freshFrame();
+  } catch (err) {
+    console.warn('YZ için ekran alınamadı:', err.message);
+    return [];
+  }
+  const bright = meanBrightness(img);
+  if (bright < 6) {
+    console.warn(`ekran görüntüsü siyah (parlaklık ${bright.toFixed(1)}): oyun özel tam ekranda olabilir`);
+    return [];
+  }
+  const { width, height } = img.getSize();
   const out = [{ data: img.resize({ width: 1280, quality: 'good' }).toJPEG(70).toString('base64'), mediaType: 'image/jpeg', label: 'oyuncunun tam ekranı' }];
+  const hud = areaBitmap(img, { x: 0, y: height * 0.74, w: width * 0.13, h: height * 0.26 }).image;
+  out.push({ data: hud.toJPEG(90).toString('base64'), mediaType: 'image/jpeg', label: 'sol alttaki kaynak paneli (yakın): üstte nüfus, her satırda kaynak miktarı ve sağında o kaynaktaki köylü sayısı' });
   if (areaRegions?.minimap) {
     const mm = areaBitmap(img, areaRegions.minimap).image;
     out.push({ data: mm.resize({ width: Math.max(400, mm.getSize().width), quality: 'good' }).toJPEG(85).toString('base64'), mediaType: 'image/jpeg', label: 'mini harita (yakın)' });
@@ -487,7 +539,7 @@ async function runLive({ manual = false, trigger = null } = {}) {
       elapsedSec: elapsed,
       hud: lastHud,
       buildView,
-      team: team ? team.liveMembers() : [],
+      team: liveMates(),
       myCiv: state.myCiv,
       plan: state.ai.plan,
       lastAssessment: state.ai.live[0] || null,
@@ -501,37 +553,49 @@ async function runLive({ manual = false, trigger = null } = {}) {
       myColor: me?.renk || null,
       localName: myPlayer(state.match)?.name || null,
     });
-    const res = await ai.liveAssessment(context, await liveImages(), { combat, command });
+    const images = await liveImages();
+    console.log(`YZ bakıyor: ${trigger?.reason || (manual ? 'oyuncu sordu' : 'periyodik')}${combat ? ' · savaş' : ''}${command ? ' · yönet' : ''} · ${images.length} görüntü`);
+    const res = await withTimeout(ai.liveAssessment(context, images, { combat, command }), LIVE_CALL_TIMEOUT_MS, 'Koç zamanında cevap vermedi');
     if (seq !== liveSeq || state.phase !== 'playing') return;
+    console.log(`YZ cevap verdi (${((Date.now() - lastLiveAt) / 1000).toFixed(1)} sn): ${res.uyari || res.durum}`);
+    lastLiveOkAt = Date.now();
+    lastLiveError = null;
     const simdiYap = res.simdiYap || [];
     const uret = res.uret || [];
     const komutlar = command ? (res.komutlar || []).filter((k) => k?.metin).slice(0, 4) : [];
-    // Köylü dağılımı: YZ'nin oranları ekrandan okunan gerçek köylü sayısına oturtulur (toplam tutar).
-    const target = combat ? null : fitDistribution(res.dagilim, lastHud?.villagers ?? null);
-    aiTarget = target ? { target, at: Date.now() } : null;
+    // Köylü dağılımı: YZ'nin oranları gerçek köylü sayısına oturtulur (toplam tutar). Gerçek sayı:
+    // ekran okuma varsa oradan, yoksa YZ'nin sol alt panelden okuduğu sayılardan.
+    const read = res.okunanKoylu || {};
+    const readTotal = ['yemek', 'odun', 'altin', 'tas', 'bosta'].reduce((s, k) => s + Math.max(0, Number(read[k]) || 0), 0);
+    const total = lastHud?.villagers ?? (readTotal || null);
+    const target = combat ? null : fitDistribution(res.dagilim, total);
+    // Hedef, yenisi gelene kadar geçerli; köylü sayısı artınca anlık sayıya yeniden oturtulur.
+    aiTarget = target ? { dagilim: res.dagilim, total: target.food + target.wood + target.gold + target.stone, at: Date.now() } : combat ? aiTarget : null;
     ledger.observe(res.gozlem, mmss(elapsed));
     state.ai.live = [{ at: mmss(elapsed), combat, command, trigger: trigger?.reason || null, ...res, simdiYap, uret, komutlar, hedefDagilim: target ? distributionLine(target) : null }, ...state.ai.live].slice(0, 6);
     state.ai.liveStatus = 'done';
     broadcast('alert', { level: res.risk === 'yüksek' ? 'danger' : 'info', text: `Koç: ${komutlar[0]?.metin || simdiYap[0] || res.durum}` });
-    // Sade overlay: her değerlendirme bir öncekinin notlarının yerini alır (bayat tavsiye kalmasın).
-    const ttl = Math.round(liveIntervalMs() / 1000) + 60;
+    // Sade overlay: her değerlendirme bir öncekinin notlarının yerini alır; yenisi gelene kadar
+    // (oyuncu uygulayabilsin diye) kalır. Koç uzun süre bakamazsa "bakamadı" notu bunu söyler.
+    const ttl = KEEP_GUIDANCE_SEC;
     aiRisk = res.uyari && res.risk !== 'düşük' ? res.uyari : null;
     notes.remove('ai-err');
-    setOrRemove('ai-risk', res.risk === 'yüksek' ? 'danger' : 'info', res.uyari, ttl);
+    setOrRemove('ai-risk', res.risk === 'yüksek' ? 'danger' : 'info', res.uyari, Math.round(liveIntervalMs() / 1000) + 60);
     notes.removeWhere((n) => n.key.startsWith('cmd-'));
     if (command) {
-      // Yönet modu: sıralı komutlar + hedef dağılım; ayrı "şimdi/üret/geliştir" notlarına gerek yok.
+      // Yönet modu: sıralı komutlar; ayrı "şimdi/üret/geliştir" notlarına gerek yok.
       komutlar.forEach((k, i) => notes.push(`cmd-${i}`, 'cmd', `${i + 1}. ${k.metin}`, ttl));
       for (const key of ['ai-do', 'ai-uret', 'ai-gelistir']) notes.remove(key);
-      setOrRemove('cmd-dist', 'cmd', target ? distributionLine(target) : '', ttl);
     } else {
-      setOrRemove('ai-do', 'info', simdiYap[0], 120);
+      setOrRemove('ai-do', 'info', simdiYap[0], ttl);
       setOrRemove('ai-uret', 'info', uret.length ? `Üret: ${uret.join(' · ')}` : '', ttl);
       setOrRemove('ai-gelistir', 'info', res.gelistir ? `Geliştir: ${res.gelistir}` : '', ttl);
     }
     pushNotes();
   } catch (err) {
     if (seq !== liveSeq) return;
+    console.warn('YZ değerlendirmesi başarısız:', err.message);
+    lastLiveError = err.message;
     Object.assign(state.ai, { liveStatus: 'error', liveError: err.message });
     // Sessizce susmasın: koçun neden bakamadığı overlay'de de görünsün.
     notes.push('ai-err', 'info', `Koç bakamadı: ${err.message}`.slice(0, 70), 90);
@@ -542,12 +606,17 @@ async function runLive({ manual = false, trigger = null } = {}) {
   pushState();
 }
 
+// Geçerli YZ köylü hedefi (yenisi gelene kadar). Köylü sayısı değiştikçe anlık sayıya oturtulur.
+function activeAiTarget() {
+  if (!aiTarget || monitor.combat) return null;
+  const view = coach.buildView();
+  if (!(commandMode() || !view || !view.next)) return null; // build sürerken normal modda build adımı geçerli
+  return fitDistribution(aiTarget.dagilim, lastHud?.villagers ?? aiTarget.total);
+}
+
 // Köylü kaydırma notunun hedefi: yönet modunda (ya da build bitince) YZ'nin son hedefi, yoksa build adımı.
 function distributionTarget() {
-  const fresh = aiTarget && Date.now() - aiTarget.at < 3 * 60 * 1000;
-  const view = coach.buildView();
-  if (fresh && (commandMode() || !view || !view.next)) return aiTarget.target;
-  return coach.currentStep();
+  return activeAiTarget() || coach.currentStep();
 }
 
 function setOrRemove(key, level, text, ttl) {
@@ -582,6 +651,9 @@ function resetLiveWatch() {
   liveAutoCalls = 0;
   pendingTrigger = null;
   aiTarget = null;
+  lastLiveOkAt = 0;
+  lastLiveError = null;
+  stepStartedAt = 0;
   state.ai.combat = false;
   state.ai.players = null;
 }
@@ -926,32 +998,87 @@ function scheduleAoe4WorldSync(match, { firstDelayMs = AOE4WORLD_SYNC_DELAYS_MS[
   setTimeout(() => attempt(0), firstDelayMs);
 }
 
+// Aynı hata her yarım saniyede günlüğü doldurmasın: değişince ya da dakikada bir yazılır.
+const guardSeen = new Map();
+function guard(name, fn) {
+  try {
+    fn();
+  } catch (err) {
+    const prev = guardSeen.get(name);
+    if (!prev || prev.msg !== err.message || Date.now() - prev.at > 60000) {
+      console.error(`tik hatası (${name}):`, err);
+      guardSeen.set(name, { msg: err.message, at: Date.now() });
+    }
+  }
+}
+
+// Kalıcı yönlendirme notları: köylü dağılımı (build adımı ya da YZ hedefi) oyuncu uygulayana ya da
+// karar değişene kadar ekranda kalır; koç uzun süre bakamazsa bu da not olur.
+function guidanceNotes(view) {
+  const out = [];
+  const ai = activeAiTarget();
+  if (ai) {
+    out.push({ key: 'dist-line', level: commandMode() ? 'cmd' : 'info', text: distributionLine(ai) });
+  } else if (view?.build && (view.build.next || view.elapsed - stepStartedAt < 90)) {
+    out.push({ key: 'step', level: 'info', text: `Şimdi: ${stepShort(view.build.step)}` });
+  }
+  const stale = staleNote();
+  if (stale) out.push(stale);
+  return out;
+}
+
+// YZ uzun süredir bakamıyorsa sessizce susmasın.
+function staleNote() {
+  if (!aiLiveOn || state.phase !== 'playing') return null;
+  if (!ai.available()) {
+    return coach.elapsed() < 90 ? { key: 'ai-stale', level: 'info', text: 'YZ anahtarı yok: sadece yerel uyarılar' } : null;
+  }
+  const since = Date.now() - Math.max(lastLiveOkAt, liveStartAt);
+  const limit = Math.max(2 * liveIntervalMs(), 4 * 60 * 1000);
+  if (since < limit) return null;
+  const min = Math.floor(since / 60000);
+  return { key: 'ai-stale', level: 'danger', text: `Koç ${min} dk'dır bakamadı${lastLiveError ? `: ${lastLiveError}` : ''}`.slice(0, 80) };
+}
+
 function startTicking() {
   stopTicking();
+  // Her parça ayrı korunur: birindeki hata (ör. takım verisi) koçun zamanlayıcısını öldürmesin.
   const tick = () => {
-    const view = coach.tick();
-    broadcast('coach', view);
-    for (const a of view.due) {
-      broadcast('alert', a);
-      notes.push(`alert-${a.at}-${a.level}`, a.level, a.short || a.text, 45);
-    }
-    // Build adımı değişince kısa süreli "şimdi" notu.
-    if (view.build && view.build.index !== lastStepIndex) {
-      lastStepIndex = view.build.index;
-      notes.push('step', 'info', `Şimdi: ${stepShort(view.build.step)}`, 15);
-    }
-    const mates = team ? team.liveMembers() : [];
-    notes.setState([...monitor.notes(), ...hudNotes, ...teamNotes(lastHud, mates, view.elapsed)]);
-    pushNotes();
-    scheduleLive();
-    keepOverlayOnTop();
-    sendTeamStatus(view.elapsed);
-    if (team) {
-      state.team = teamView();
-      broadcast('team', state.team);
-    }
+    let view = null;
+    guard('koç', () => {
+      view = coach.tick();
+      broadcast('coach', view);
+      for (const a of view.due) {
+        broadcast('alert', a);
+        notes.push(`alert-${a.at}-${a.level}`, a.level, a.short || a.text, 45);
+      }
+      if (view.build && view.build.index !== lastStepIndex) {
+        lastStepIndex = view.build.index;
+        stepStartedAt = view.elapsed;
+      }
+    });
+    const elapsed = view ? view.elapsed : coach.elapsed();
+    guard('notlar', () => {
+      const mates = liveMates();
+      notes.setState([
+        ...monitor.notes(),
+        ...guidanceNotes(view),
+        ...hudNotes,
+        ...teamNotes(lastHud, mates, elapsed),
+      ]);
+      pushNotes();
+    });
+    guard('yz', scheduleLive);
+    guard('overlay', keepOverlayOnTop);
+    guard('takım', () => {
+      sendTeamStatus(elapsed);
+      if (team) {
+        state.team = teamView();
+        broadcast('team', state.team);
+      }
+    });
     // İlk 2 dakikadan sonra rakip kartlarını otomatik küçült.
-    if (state.cardsVisible && view.elapsed > 120 && !state.cardsPinned) {
+    if (state.cardsVisible && elapsed > 120 && !state.cardsPinned) {
       state.cardsVisible = false;
       pushState();
     }
@@ -1001,9 +1128,16 @@ function startWatcher() {
     scheduleAoe4WorldSync(match, { firstDelayMs: 0 });
     broadcast('matches', store.matches);
   });
-  watcher.on('matchLoading', ({ match }) => onMatchLoading(match));
-  watcher.on('matchStarted', ({ match }) => onMatchStarted(match));
+  watcher.on('matchLoading', ({ match }) => {
+    console.log(`maç yükleniyor: ${match.matchId} · ${match.players.map((p) => `${p.name}(${p.team})`).join(', ')}`);
+    onMatchLoading(match);
+  });
+  watcher.on('matchStarted', ({ match }) => {
+    console.log(`maç başladı: ${match.matchId}`);
+    onMatchStarted(match);
+  });
   watcher.on('matchEnded', ({ match }) => {
+    console.log(`maç bitti: ${match.matchId}`);
     onMatchEnded(match);
     scheduleAoe4WorldSync(match);
   });
@@ -1279,8 +1413,28 @@ function registerIpc() {
   ipcMain.handle('calib:save', (_e, cal) => {
     const s = store.updateSettings({ hudRegions: { width: cal.width, height: cal.height, fields: cal.fields } });
     broadcast('settings', s);
-    return s;
+    // Diske gerçekten yazıldı mı: dosyadan geri okuyup say.
+    let saved = 0;
+    try {
+      saved = Object.keys(JSON.parse(fs.readFileSync(store.settingsPath, 'utf8')).hudRegions?.fields || {}).length;
+    } catch (err) {
+      console.error('kalibrasyon geri okunamadı:', err.message);
+    }
+    console.log(`kalibrasyon kaydedildi: ${Object.keys(cal.fields).length} alan, diskte ${saved}`);
+    if (saved !== Object.keys(cal.fields).length) throw new Error(`Kalibrasyon diske yazılamadı (${store.lastWrite?.error || 'bilinmeyen hata'})`);
+    return { settings: s, saved };
   });
+  ipcMain.handle('diag:get', () => ({
+    version: app.getVersion(),
+    userData: app.getPath('userData'),
+    logFile: logger.log.path(),
+    lastWrite: store.lastWrite,
+    keys: { gemini: Boolean(store.settings.geminiKeyEnc), claude: Boolean(store.settings.aiKeyEnc) },
+    calibrated: Boolean(store.settings.hudRegions?.fields),
+    lastLiveOkAt,
+    lastLiveError,
+  }));
+  ipcMain.handle('diag:openLogs', () => shell.openPath(path.dirname(logger.log.path() || app.getPath('userData'))));
   ipcMain.handle('ai:setKey', (_e, provider, key) => saveApiKey(provider, key));
   ipcMain.handle('ai:test', () => ai.testConnection());
   ipcMain.handle('ai:ask', () => runLive({ manual: true }));
@@ -1333,7 +1487,12 @@ function setupUpdater() {
 
 // ---------- Başlangıç ----------
 
+// Ana süreçteki beklenmeyen hatalar uygulamayı durdurmasın ve kaybolmasın: günlüğe yazılır.
+process.on('uncaughtException', (err) => console.error('yakalanmamış hata:', err));
+process.on('unhandledRejection', (err) => console.error('yakalanmamış ret:', err));
+
 if (!app.requestSingleInstanceLock()) {
+  // Aynı veri klasörünü iki uygulama birden kullanırsa birbirinin kayıtlarını ezer.
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -1352,7 +1511,11 @@ if (!app.requestSingleInstanceLock()) {
       app.exit(0);
       return;
     }
+    const logFile = logger.init(path.join(app.getPath('userData'), 'logs'));
     store = new Store(app.getPath('userData'));
+    const s = store.settings;
+    console.log(`başladı: sürüm ${app.getVersion()}${app.isPackaged ? '' : ' (geliştirme)'} · veri: ${app.getPath('userData')} · günlük: ${logFile}`);
+    console.log(`ayarlar: sağlayıcı=${s.aiProvider} geminiAnahtarı=${Boolean(s.geminiKeyEnc)} claudeAnahtarı=${Boolean(s.aiKeyEnc)} kalibrasyon=${Boolean(s.hudRegions?.fields)} ekranOkuma=${s.screenReadingEnabled} mod=${s.coachMode} build=${JSON.stringify(s.buildByCiv)}`);
     library = new BuildLibrary(path.join(app.getPath('userData'), 'cache'));
     screenReader = new ScreenReader(path.join(app.getPath('userData'), 'ocr'));
     for (const [code, slug] of Object.entries(store.settings.learnedCivCodes)) civs.learnLogCode(code, slug);

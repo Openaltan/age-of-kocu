@@ -36,11 +36,12 @@ class Store {
     this.matchesPath = path.join(dir, 'matches.json');
     this.settings = { ...DEFAULT_SETTINGS, ...readJson(this.settingsPath, {}) };
     this.matches = readJson(this.matchesPath, []);
+    this.lastWrite = null; // { file, at, ok, error }
   }
 
   updateSettings(patch) {
     this.settings = { ...this.settings, ...patch };
-    writeJson(this.settingsPath, this.settings);
+    this.write(this.settingsPath, this.settings);
     return this.settings;
   }
 
@@ -50,23 +51,51 @@ class Store {
     if (i >= 0) this.matches[i] = { ...this.matches[i], ...record };
     else this.matches.unshift(record);
     this.matches = this.matches.slice(0, 500);
-    writeJson(this.matchesPath, this.matches);
+    this.write(this.matchesPath, this.matches);
+  }
+
+  // Yazma hatası akışı kırmasın (maç sonu kaydı, analiz yine çalışsın) ama günlüğe ve panele düşsün.
+  write(file, data) {
+    try {
+      writeJson(file, data);
+      this.lastWrite = { file: path.basename(file), at: Date.now(), ok: true };
+    } catch (err) {
+      this.lastWrite = { file: path.basename(file), at: Date.now(), ok: false, error: err.message };
+      console.error(`kayıt yazılamadı (${file}):`, err.message);
+    }
   }
 }
 
+// Okunamayan dosya sessizce varsayılana dönmesin: aksi halde bir sonraki kayıt anahtarı ve
+// kalibrasyonu silerdi. Önce son sağlam yedeğe (.bak) bakılır, bozuk dosya saklanır.
 function readJson(file, fallback) {
+  if (!fs.existsSync(file)) return fallback;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return fallback;
+  } catch (err) {
+    console.error(`okunamadı (${file}):`, err.message);
+    try {
+      fs.copyFileSync(file, `${file}.bozuk-${Date.now()}`);
+    } catch {
+      // kopyalanamazsa da devam
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'));
+      console.warn(`yedekten yüklendi: ${file}.bak`);
+      return data;
+    } catch {
+      return fallback;
+    }
   }
 }
 
-// Yarım yazılmış dosya bırakmamak için önce geçici dosyaya yazıp taşırız.
+// Yarım yazılmış dosya bırakmamak için önce geçici dosyaya yazıp taşırız; sağlam son hali .bak'ta durur.
 function writeJson(file, data) {
   const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  const text = JSON.stringify(data, null, 2);
+  fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, file);
+  fs.writeFileSync(`${file}.bak`, text);
 }
 
 module.exports = { Store };

@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('kocu', {
   askCoach: () => ipcRenderer.invoke('ai:ask'),
   aiReport: (matchId) => ipcRenderer.invoke('ai:report', matchId),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  getDiagnostics: () => ipcRenderer.invoke('diag:get'),
+  openLogs: () => ipcRenderer.invoke('diag:openLogs'),
   startSimulation: () => ipcRenderer.invoke('sim:start'),
   stopSimulation: () => ipcRenderer.invoke('sim:stop'),
   shiftStep: (delta) => ipcRenderer.invoke('coach:shift', delta),

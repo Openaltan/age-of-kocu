@@ -139,6 +139,15 @@ class LogWatcher extends EventEmitter {
     this.timer = null;
   }
 
+  // Bir dinleyicideki hata kalan satırları (ör. maç sonu) kaybettirmesin.
+  safeEmit(type, ev) {
+    try {
+      this.emit(type, ev);
+    } catch (err) {
+      console.error(`log olayı işlenemedi (${type}):`, err);
+    }
+  }
+
   readNew(isCatchUp) {
     let stat;
     try {
@@ -170,10 +179,10 @@ class LogWatcher extends EventEmitter {
         for (const ev of this.parser.feed(line)) {
           if (isCatchUp) {
             // Geçmiş satırlar: sadece profili ve sonuçlanmış maçları (geçmişe kayıt için) bildir.
-            if (ev.type === 'localProfile') this.emit(ev.type, ev);
-            if (ev.type === 'matchResult') this.emit('pastMatch', ev);
+            if (ev.type === 'localProfile') this.safeEmit(ev.type, ev);
+            if (ev.type === 'matchResult') this.safeEmit('pastMatch', ev);
           } else {
-            this.emit(ev.type, ev);
+            this.safeEmit(ev.type, ev);
           }
         }
       }

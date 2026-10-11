@@ -52,6 +52,8 @@ const SCHEMAS = {
     simdiYap: strArr,
     uret: strArr,
     gelistir: str,
+    // Sol alttaki kaynak panelinden okunan gerçek köylü sayıları (ekran okuma yoksa toplam buradan).
+    okunanKoylu: obj({ yemek: num, odun: num, altin: num, tas: num, bosta: num }),
     // Hedef köylü dağılımı (sayı). Metni uygulama üretir ki toplam her zaman tutsun.
     dagilim: obj({ yemek: num, odun: num, altin: num, tas: num }),
     // Yönet modunda sıralı komutlar; normal modda boş.
@@ -315,7 +317,8 @@ ${JSON.stringify(context)}`,
       text: `Maç sürüyor. ${seen}Sen kontrolcü bir koçsun: her zaman somut emir ver; oyuncu senin dediğini yapacak.
 ${mode}
 ${commandMode}
-- dagilim: köylülerin şu an olması gereken dağılımı (yemek/odun/altın/taş köylü sayısı). Toplamı ekrandan okunan toplam köylüye (yoksa tahminine) eşit olsun. Köylü dağılım sayılarını simdiYap ya da komut metinlerine yazma; uygulama onları dagilim'dan kendisi hesaplar. Savaşta ya da emin değilsen hepsi 0.
+- okunanKoylu: "sol alttaki kaynak paneli" görüntüsünde her kaynak satırının sağında yazan köylü sayıları ve boştaki köylü (yemek, odun, altin, tas, bosta). Tahmin etme, gördüğünü yaz; görüntü yoksa ya da okunamıyorsa hepsi 0.
+- dagilim: köylülerin şu an olması gereken dağılımı (yemek/odun/altın/taş köylü sayısı). Toplamı okunanKoylu toplamına (ekrandanOkunan.toplamKoylu varsa ona) eşit olsun. Köylü dağılım sayılarını simdiYap ya da komut metinlerine yazma; uygulama onları dagilim'dan kendisi hesaplar. Savaşta ya da emin değilsen hepsi 0.
 - uyari: oyuncunun ekranında köşede duracak tek not, en fazla 6 kelime. Gerçek bir risk ya da kritik eksik varsa yaz; yön biliniyorsa oyuncunun yapısına göre ekle (ör. "Rakip gelebilir · değirmen tarafından", "Baskın · altın madeninde", "Altın bitiyor"); yoksa "".
 - durum: tek kısa cümle.
 - simdiYap: en fazla 3 madde, her biri en fazla 6 kelime, somut ("Kışla kur", "Ahırdan 4 atlı bas").

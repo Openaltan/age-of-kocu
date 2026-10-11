@@ -759,6 +759,26 @@ function renderHistory() {
 }
 
 // ---------- Ayarlar ----------
+// Sorun olunca bakılacak yer: veri klasörü, son kayıt, YZ durumu ve günlük dosyası.
+function diagnosticsSection() {
+  const host = el('div', { class: 'box' }, el('p', { class: 'muted', text: 'Yükleniyor…' }));
+  api.getDiagnostics().then((d) => {
+    const ago = (t) => (t ? `${Math.round((Date.now() - t) / 60000)} dk önce` : 'hiç');
+    fill(host,
+      el('p', { class: 'muted', text: 'Koç susarsa ya da bir ayar kaydedilmiyorsa günlük dosyasını Altan\'a gönder.' }),
+      el('ul', {},
+        el('li', {}, el('b', { text: 'Sürüm: ' }), d.version),
+        el('li', {}, el('b', { text: 'Veri klasörü: ' }), d.userData),
+        el('li', {}, el('b', { text: 'Gemini anahtarı: ' }), d.keys.gemini ? 'kayıtlı' : 'yok', ' · ', el('b', { text: 'Kalibrasyon: ' }), d.calibrated ? 'kayıtlı' : 'yok'),
+        el('li', {}, el('b', { text: 'Son kayıt: ' }), d.lastWrite ? `${d.lastWrite.file} · ${ago(d.lastWrite.at)} · ${d.lastWrite.ok ? 'başarılı' : `HATA: ${d.lastWrite.error}`}` : 'bu oturumda yok'),
+        el('li', {}, el('b', { text: 'Son YZ değerlendirmesi: ' }), ago(d.lastLiveOkAt), d.lastLiveError ? ` · son hata: ${d.lastLiveError}` : ''),
+      ),
+      el('button', { class: 'btn', text: 'Günlük klasörünü aç', onclick: () => api.openLogs() }),
+    );
+  }).catch((err) => fill(host, el('p', { class: 'res-loss', text: err.message })));
+  return [el('h2', { text: 'Tanılama' }), host];
+}
+
 function renderSettings() {
   const v = views.settings;
   const idInput = el('input', { type: 'number', value: settings.profileId || '', placeholder: state.localProfileId ? `Otomatik: ${state.localProfileId}` : 'Otomatik bulunacak' });
@@ -786,6 +806,7 @@ function renderSettings() {
     ),
     teamSettingsSection(),
     aiSettingsSection(),
+    diagnosticsSection(),
     el('h2', { text: 'Kısayollar (oyun içinde çalışır)' }),
     el('div', { class: 'box' }, el('ul', {},
       el('li', {}, el('kbd', { text: 'Ctrl+Alt+→' }), ' / ', el('kbd', { text: 'Ctrl+Alt+←' }), ' — build adımı ileri / geri (öndeysen ya da geride kaldıysan)'),
