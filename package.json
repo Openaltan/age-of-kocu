@@ -1,7 +1,7 @@
 {
   "name": "age-of-kocu",
   "productName": "Age of Koçu",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Age of Empires IV için Türkçe maç koçu: rakip keşfi, build order rehberi, maç analizi.",
   "main": "src/main/main.js",
   "author": "altanarl",
