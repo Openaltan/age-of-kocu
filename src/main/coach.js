@@ -197,6 +197,29 @@ function pickBuild(builds, scouting) {
   return { build: builds[0], reason: 'En yüksek puanlı build' };
 }
 
+// Serbest mod: YZ'nin yazdığı özel build'i koçun build biçimine çevirir. Köylü sayısı adımdaki
+// dağılımın toplamıdır (YZ'nin yazdığı sayılar birbirini tutmasa da tutarlı kalsın).
+function customBuildFrom(ozel, id) {
+  if (!ozel?.adimlar?.length) return null;
+  const n = (v) => Math.max(0, Math.round(Number(v) || 0));
+  const steps = ozel.adimlar.map((a) => {
+    const s = { food: n(a.yemek), wood: n(a.odun), gold: n(a.altin), stone: n(a.tas), builder: n(a.insaat) };
+    const total = s.food + s.wood + s.gold + s.stone + s.builder;
+    return { age: null, villagers: total || null, time: n(a.saniye) || null, ...s, notes: a.not ? [String(a.not)] : [] };
+  }).filter((s) => s.villagers || s.notes.length);
+  if (!steps.length) return null;
+  return {
+    id,
+    name: `Özel: ${ozel.ad || 'rakibe göre'}`,
+    author: 'Koç',
+    strategy: ozel.oyunStili || '',
+    source: null,
+    custom: true,
+    translated: true, // notlar zaten Türkçe
+    steps,
+  };
+}
+
 // Yükleme ekranında rakipler için tek satırlık etiketler: "KEYI: ülke uzmanı, formda".
 function enemyLabels(scouting) {
   if (!scouting) return [];
@@ -215,4 +238,4 @@ function enemyLabels(scouting) {
   }).filter(Boolean);
 }
 
-module.exports = { Coach, BuildRunner, stepTriggers, buildAlerts, enemyLabels, pickBuild, VILLAGER_TRAIN_SEC };
+module.exports = { Coach, BuildRunner, stepTriggers, buildAlerts, enemyLabels, pickBuild, customBuildFrom, VILLAGER_TRAIN_SEC };

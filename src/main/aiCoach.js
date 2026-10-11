@@ -36,6 +36,16 @@ const SCHEMAS = {
     buildSecimi: str,
     buildGerekcesi: str,
   }),
+  // Serbest mod: plan + koçun rakibe göre yazdığı özel build ve oyun stili.
+  ozelBuild: obj({
+    ad: str,
+    oyunStili: str,
+    kilitNoktalar: strArr,
+    adimlar: {
+      type: 'array',
+      items: obj({ saniye: num, yemek: num, odun: num, altin: num, tas: num, insaat: num, not: str }),
+    },
+  }),
   live: obj({
     uyari: str,
     durum: str,
@@ -248,11 +258,22 @@ class AiCoach {
     }
   }
 
-  // Maç öncesi: oyun planı, rakip tahminleri ve dakikalı plan.
-  prematchPlan(context) {
+  // Maç öncesi: oyun planı, rakip tahminleri ve dakikalı plan. custom: serbest mod (özel build de yaz).
+  prematchPlan(context, { custom = false } = {}) {
+    const schema = custom
+      ? { ...SCHEMAS.plan, properties: { ...SCHEMAS.plan.properties, ozelBuild: SCHEMAS.ozelBuild }, required: [...SCHEMAS.plan.required, 'ozelBuild'] }
+      : SCHEMAS.plan;
+    const customText = custom ? `
+- ozelBuild (SERBEST MOD): hazır build kullanma; bu maçtaki rakiplere göre tamamen özel bir açılış ve oyun stili yaz.
+  Rakiplerin ülkesine, bu ülkeyle tecrübesine, oyun tarzına (erken mi bitirir, uzun maçta mı güçlü, ortalama maç süresi) ve bize karşı geçmiş maçlarda bastıklarına (bizeKarsiAgirlikliOrdu, gecmisKarsilasmalar) göre şekillendir. Bir rakip erken baskıcıysa savunmayı, uzun maçta zayıfsa ekonomiyi ya da baskıyı buna göre ayarla.
+  * ad: kısa build adı ("Kule savunmalı hızlı Kale").
+  * oyunStili: maç boyu nasıl oynayacağım, 2-3 cümle (hangi birim kompozisyonu, ne zaman baskı, kime odaklan).
+  * kilitNoktalar: 3-5 ölçülebilir zamanlama hedefi ("4:30 Feodal'e tıkla", "8:00'de 10 mızrakçı").
+  * adimlar: Karanlık Çağ'dan Kale Çağı'na kadar 8-14 adım. Her adımda köylülerin o andaki tam dağılımı (yemek, odun, altin, tas, insaat sayıları; toplamı o andaki köylü sayısı) ve saniye (adımın yaklaşık oyun saniyesi). not: Türkçe, kısa ve somut: ne inşa edilecek, hangi binadan kaç birim, hangi teknoloji, hangi simge yapıyla (ulkeyeOzel.simgeYapilar) çağ atlanacak. Ülkenin özel başlangıcına uy.
+- buildSecimi ve buildGerekcesi: "" (serbest modda hazır build seçilmez).` : '';
     return this.ask({
       effort: 'high',
-      schema: SCHEMAS.plan,
+      schema,
       content: [{
         type: 'text',
         text: `Maç yükleniyor. Aşağıdaki verilerle bu maç için oyun planı hazırla.
@@ -261,8 +282,8 @@ class AiCoach {
 - planAdimlari: maç içinde benim (ben alanındaki oyuncu) için 4-7 zamanlı hatırlatma; dakika (ondalıklı olabilir) ve en fazla 6 kelimelik mesaj.
 - kontraOnerisi: rakip ülke/oyun tarzlarına karşı hangi birimlere ağırlık vermeliyim.
 - takimKoordinasyonu: takım arkadaşlarımla nasıl rol paylaşmalıyız.
-- buildSecimi: buildSecenekleri verildiyse rakiplere ve haritaya en uygun build'in id'si (listeden aynen); verilmediyse "".
-- buildGerekcesi: seçimin tek cümlelik nedeni (ör. "İki rakip erken baskıcı: savunmalı açılış"); seçim yoksa "".
+- buildSecimi: buildSecenekleri verildiyse rakiplere ve haritaya en uygun build'in id'si (listeden aynen); verilmediyse "". Sadece ülkeye değil her rakibin oyun tarzına, bu ülkeyle tecrübesine, ortalama maç süresine ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına (bizeKarsiAgirlikliOrdu, gecmisKarsilasmalar) bak; ör. geçmişte atlıyla erken geldiyse mızrakçı/kule içeren açılışı seç.
+- buildGerekcesi: seçimin tek cümlelik nedeni, hangi rakip verisine dayandığını söyleyerek (ör. "KEYI bize karşı 2 maçta 6. dk atlı baskını yaptı: kule açılışı"); seçim yoksa "".${customText}
 
 Veri:
 ${JSON.stringify(context)}`,

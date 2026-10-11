@@ -116,3 +116,19 @@ test('otomatik build için aday özetleri maç öncesi bağlama girer', () => {
   assert.match(c.buildSecenekleri[0].acilis, /\[archery range\]/);
   assert.strictEqual(prematchContext({ scouting, build: null, matches: [], loadAnalysis: () => null }).buildSecenekleri, undefined);
 });
+
+test('rakip kartı: bu ülkeyle tecrübe, ortalama süreler ve bize karşı ağırlıklı ordu', () => {
+  const { prematchContext } = require('../src/main/aiContext');
+  const enemy = {
+    profileId: 9, name: 'KEYI', civTr: 'Fransızlar', civSlug: 'french', rating: null, insights: [],
+    stats: { games: 40, winRate: 55, topCivs: [], byCiv: { french: { games: 12, winRate: 66 } }, short: { winRate: 70 }, long: { winRate: 30 }, shortWinShare: 50, avgWinMin: 14, avgLossMin: 27, form: 'GGM', controller: false },
+  };
+  const matches = [1, 2].map((id) => ({ matchId: id, myTeam: 0, hasAnalysis: true, players: [{ name: 'KEYI', profileId: 9, team: 1, civCode: 'french' }] }));
+  const analysis = (id) => ({ report: { players: [{ name: 'KEYI', ageUps: {}, military: { firstAt: 300, composition: id === 1 ? [{ name: 'Atlı', count: 12 }, { name: 'Okçu', count: 4 }] : [{ name: 'Atlı', count: 8 }] } }] } });
+  const c = prematchContext({ scouting: { kind: 'rm_2v2', allies: [], enemies: [enemy] }, build: null, matches, loadAnalysis: analysis });
+  const r = c.rakipler[0];
+  assert.strictEqual(r.buUlkeyle, '12 maç %66');
+  assert.strictEqual(r.ortalamaKazanmaDk, 14);
+  assert.deepStrictEqual(r.bizeKarsiAgirlikliOrdu, ['Atlı x20', 'Okçu x4']);
+  assert.strictEqual(r.gecmisKarsilasmalar.length, 2);
+});

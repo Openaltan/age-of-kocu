@@ -96,8 +96,14 @@ function renderLive() {
       ),
     ),
     calibrationWarning(),
-    s.buildAuto ? el('p', { class: 'muted' }, el('b', { text: 'Otomatik build: ' }),
-      s.buildAuto.status === 'waiting' ? 'koç rakiplere bakıp seçiyor…' : `${s.buildAuto.name}${s.buildAuto.reason ? ` — ${s.buildAuto.reason}` : ''} (${s.buildAuto.source})`) : null,
+    s.buildAuto ? el('div', { class: 'box' },
+      el('p', {}, el('b', { text: s.buildAuto.mode === 'serbest' ? 'Serbest build: ' : 'Otomatik build: ' }),
+        s.buildAuto.status === 'waiting'
+          ? (s.buildAuto.mode === 'serbest' ? 'koç rakiplere göre özel build yazıyor…' : 'koç rakiplere bakıp seçiyor…')
+          : `${s.buildAuto.name} (${s.buildAuto.source})`),
+      s.buildAuto.reason ? el('p', { class: 'muted', text: s.buildAuto.reason }) : null,
+      s.buildAuto.kilitNoktalar?.length ? el('ul', {}, s.buildAuto.kilitNoktalar.map((k) => el('li', { text: k }))) : null,
+    ) : null,
     s.phase === 'playing' ? el('div', { id: 'live-step' }) : null,
     s.phase === 'playing' ? [el('h2', { text: 'Takımım' }), el('div', { id: 'live-team' }, teamBox(s.team))] : null,
     aiLiveSection(s),
@@ -529,14 +535,15 @@ async function loadBuildList(civ, host, refresh) {
     return;
   }
   const select = async (e, id) => { e.stopPropagation(); settings.buildByCiv = await api.selectBuild(civ.slug, id); loadBuildList(civ, host, false); };
-  const auto = el('div', { class: 'build-item' },
-    el('div', {},
-      el('div', { class: 'name', text: 'Otomatik (rakibe göre)' }),
-      el('div', { class: 'sub', text: 'Yükleme ekranında koç rakiplerin ülkesine, oyun tarzına ve geçmişine bakıp aşağıdaki build\'lerden birini seçer (YZ yoksa: erken baskıcı rakibe karşı savunmalı açılış). Seçimi ve nedenini Canlı Maç sayfasında görürsün.' }),
-    ),
-    chosen === 'auto' ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) : el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, 'auto') }),
+  const special = (id, name, sub) => el('div', { class: 'build-item' },
+    el('div', {}, el('div', { class: 'name', text: name }), el('div', { class: 'sub', text: sub })),
+    chosen === id ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) : el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, id) }),
   );
-  fill(host, auto, ...builds.map((b) => {
+  const auto = special('auto', 'Otomatik (hazırlardan rakibe göre)',
+    'Yükleme ekranında koç her rakibin ülkesine, o ülkeyle tecrübesine, oyun tarzına (erken mi bitirir, uzun maçta mı güçlü) ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına bakıp aşağıdaki hazır build\'lerden birini seçer. YZ yoksa: erken baskıcıya karşı savunmalı açılış. Seçimi ve nedenini Canlı Maç sayfasında görürsün.');
+  const free = special('serbest', 'Serbest (koç özel build yazar)',
+    'Hazır build kullanılmaz: koç bu maçın rakiplerine göre tamamen özel bir açılış (adım adım köylü dağılımı, binalar, simge yapı, çağ atlama) ve maç boyu oyun stili yazar; canlı koç da bu stile göre yönetir. Yükleme ekranında YZ gerekir; yazılamazsa otomatik seçime düşer.');
+  fill(host, auto, free, ...builds.map((b) => {
     const item = el('div', { class: `build-item ${openBuildId === b.id ? 'open' : ''}`, onclick: () => { openBuildId = openBuildId === b.id ? null : b.id; loadBuildList(civ, host, false); } },
       el('div', {},
         el('div', { class: 'name', text: b.name }),

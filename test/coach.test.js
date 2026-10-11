@@ -86,3 +86,27 @@ test('otomatik build: erken baskıcı rakibe savunmalı, uzun maçta zayıflara 
   assert.deepStrictEqual(pickBuild(builds, null), { build: builds[0], reason: 'En yüksek puanlı build' });
   assert.deepStrictEqual(pickBuild([], null), { build: null, reason: null });
 });
+
+const { customBuildFrom } = require('../src/main/coach');
+
+test('serbest build: YZ adımları koç biçimine çevrilir, köylü sayısı dağılımın toplamı', () => {
+  const b = customBuildFrom({
+    ad: 'Kule savunmalı Kale',
+    oyunStili: 'Mızrakçı + okçu, 12. dk baskın.',
+    kilitNoktalar: ['4:30 Feodal'],
+    adimlar: [
+      { saniye: 0, yemek: 6, odun: 0, altin: 0, tas: 0, insaat: 0, not: 'Değirmen kur' },
+      { saniye: 130, yemek: 6, odun: 4, altin: 2, tas: 0, insaat: 1, not: 'Feodal: Jiangnan Kulesi' }, // YZ 12 dese de toplam 13
+      { saniye: 0, yemek: 0, odun: 0, altin: 0, tas: 0, insaat: 0, not: '' }, // boş adım atılır
+    ],
+  }, 'ozel-1');
+  assert.strictEqual(b.name, 'Özel: Kule savunmalı Kale');
+  assert.strictEqual(b.custom, true);
+  assert.strictEqual(b.translated, true);
+  assert.strictEqual(b.steps.length, 2);
+  assert.deepStrictEqual(b.steps[1], { age: null, villagers: 13, time: 130, food: 6, wood: 4, gold: 2, stone: 0, builder: 1, notes: ['Feodal: Jiangnan Kulesi'] });
+  assert.strictEqual(b.steps[0].time, null);
+  assert.strictEqual(customBuildFrom({ adimlar: [] }, 'x'), null);
+  // Koç bu build'i normal build gibi adım adım yürütür.
+  assert.deepStrictEqual(stepTriggers(b.steps), [0, 130]);
+});

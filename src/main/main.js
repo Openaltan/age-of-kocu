@@ -5,7 +5,7 @@ const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, dialog, nati
 const { LogWatcher, defaultLogPath } = require('./logWatcher');
 const { Store } = require('./store');
 const { BuildLibrary } = require('./aoe4guides');
-const { Coach, buildAlerts, enemyLabels, pickBuild } = require('./coach');
+const { Coach, buildAlerts, enemyLabels, pickBuild, customBuildFrom } = require('./coach');
 const { NoteBoard } = require('./notes');
 const { TeamSync, teamNotes } = require('./teamSync');
 const aoe4world = require('./aoe4world');
@@ -136,10 +136,11 @@ async function loadBuildFor(match) {
   if (!civ) return null;
   try {
     const choice = store.settings.buildByCiv[civ.slug];
-    if (choice === 'auto') {
-      // Otomatik: rakipler belli olunca koç (ya da kural) seçer; o zamana kadar en yüksek puanlı.
+    if (choice === 'auto' || choice === 'serbest') {
+      // Otomatik: rakipler belli olunca koç (ya da kural) hazır build'lerden seçer.
+      // Serbest: koç rakibe göre özel build yazar. İkisinde de o zamana kadar en yüksek puanlı build.
       autoCandidates = await library.list(civ.guide);
-      state.buildAuto = { status: 'waiting' };
+      state.buildAuto = { status: 'waiting', mode: choice };
       useBuild(autoCandidates[0] || null);
     } else {
       useBuild(await library.get(civ.guide, choice));
@@ -164,10 +165,10 @@ function useBuild(build) {
 }
 
 // Otomatik build kararı (YZ ya da kural). Sadece "Otomatik" seçiliyken ve bir kez uygulanır.
-function applyAutoBuild(build, reason, source) {
+function applyAutoBuild(build, reason, source, extra = {}) {
   if (!autoCandidates || !build || state.buildAuto?.status === 'done') return;
   if (build.id !== state.build?.id) useBuild(build);
-  state.buildAuto = { status: 'done', name: build.name, reason: reason || null, source };
+  state.buildAuto = { status: 'done', mode: state.buildAuto?.mode || 'auto', name: build.name, reason: reason || null, source, ...extra };
   notes.push('auto-build', 'info', `Build: ${build.name}`, 40);
   pushNotes();
   pushState();
@@ -176,7 +177,28 @@ function applyAutoBuild(build, reason, source) {
 function autoBuildByRule() {
   if (!autoCandidates) return;
   const p = pickBuild(autoCandidates, state.scouting);
-  applyAutoBuild(p.build, p.reason, 'kural');
+  // Serbest istenip YZ yazamadıysa hazır build'e düşüldüğü belli olsun.
+  const reason = state.buildAuto?.mode === 'serbest' ? `Özel build yazılamadı, hazır build: ${p.reason}` : p.reason;
+  applyAutoBuild(p.build, reason, 'kural');
+}
+
+// Plan geldiğinde otomatik/serbest kararını uygular.
+function applyPlanBuild(plan) {
+  if (!autoCandidates || state.buildAuto?.status !== 'waiting') return;
+  if (state.buildAuto.mode === 'serbest') {
+    const custom = customBuildFrom(plan.ozelBuild, `ozel-${state.match?.matchId || Date.now()}`);
+    if (custom) {
+      applyAutoBuild(custom, plan.ozelBuild.oyunStili, 'YZ · serbest', { kilitNoktalar: plan.ozelBuild.kilitNoktalar || [] });
+      return;
+    }
+  } else {
+    const picked = autoCandidates.find((b) => b.id === plan.buildSecimi);
+    if (picked) {
+      applyAutoBuild(picked, plan.buildGerekcesi, 'YZ');
+      return;
+    }
+  }
+  autoBuildByRule();
 }
 
 async function onMatchLoading(match, { simulated = false } = {}) {
@@ -364,20 +386,20 @@ async function runPrematch(match) {
       scouting: state.scouting,
       myCiv: state.myCiv,
       build: state.build,
-      candidates: state.buildAuto?.status === 'waiting' ? autoCandidates : null,
+      candidates: state.buildAuto?.status === 'waiting' && state.buildAuto.mode === 'auto' ? autoCandidates : null,
+      specials: aiContext.civSpecials(gamedata, civs.fromSlug(state.myCiv?.slug)?.data, 3),
       matches: store.matches,
       loadAnalysis: (id) => postgame.load(id),
       mapName: readMapName(),
       localName: myPlayer(match)?.name || null,
     });
-    const plan = await ai.prematchPlan(context);
+    const custom = state.buildAuto?.status === 'waiting' && state.buildAuto.mode === 'serbest';
+    const plan = await ai.prematchPlan(context, { custom });
     if (state.match !== match) return;
     Object.assign(state.ai, { plan, planStatus: 'done' });
     coach.addAlerts(plan.planAdimlari.map((a) => ({ at: Math.round(a.dakika * 60), level: 'info', text: `Koç: ${a.mesaj}`, short: a.mesaj })));
     if (match.matchId) store.saveMatch({ matchId: match.matchId, aiPlan: plan });
-    const picked = autoCandidates?.find((b) => b.id === plan.buildSecimi);
-    if (picked) applyAutoBuild(picked, plan.buildGerekcesi, 'YZ');
-    else autoBuildByRule();
+    applyPlanBuild(plan);
   } catch (err) {
     Object.assign(state.ai, { planStatus: 'error', planError: err.message });
     if (state.match === match) autoBuildByRule();
@@ -1205,13 +1227,12 @@ function registerIpc() {
   ipcMain.handle('builds:select', async (_e, civSlug, buildId) => {
     store.updateSettings({ buildByCiv: { ...store.settings.buildByCiv, [civSlug]: buildId } });
     if (state.myCiv?.slug === civSlug) {
-      if (buildId === 'auto') {
-        // Maç sırasında otomatiğe geçildi: plan seçtiyse onu, yoksa kuralı uygula.
+      if (buildId === 'auto' || buildId === 'serbest') {
+        // Maç sırasında geçildi: plan bunu içeriyorsa onu, yoksa kuralı uygula (plan bir daha istenmez).
         autoCandidates = await library.list(state.myCiv.guide);
-        state.buildAuto = { status: 'waiting' };
-        const picked = autoCandidates.find((b) => b.id === state.ai.plan?.buildSecimi);
-        if (picked) applyAutoBuild(picked, state.ai.plan.buildGerekcesi, 'YZ');
-        else if (state.scouting) autoBuildByRule();
+        state.buildAuto = { status: 'waiting', mode: buildId };
+        if (state.ai.plan) applyPlanBuild(state.ai.plan);
+        else if (state.scouting && !aiOn('aiPrematch')) autoBuildByRule();
       } else {
         autoCandidates = null;
         state.buildAuto = null;

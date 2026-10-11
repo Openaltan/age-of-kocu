@@ -8,7 +8,7 @@ const { noteText, AGE_NAMES } = require('./baseLedger');
 
 // Rakip defteri: bu oyuncularla daha önce oynanan maçlar ve (analiz varsa) o maçtaki oyunları.
 // matches: store.matches, loadAnalysis(matchId) -> analiz ya da null
-function opponentHistory(profileIds, matches, loadAnalysis, limit = 3) {
+function opponentHistory(profileIds, matches, loadAnalysis, limit = 5) {
   const out = {};
   for (const id of profileIds) {
     if (!id) continue;
@@ -35,8 +35,21 @@ function opponentHistory(profileIds, matches, loadAnalysis, limit = 3) {
   return out;
 }
 
+// Bize karşı oynadığı maçlarda en çok bastığı birimler (rakip defterindeki "Ad xN" satırlarından).
+function armyTendency(history) {
+  const total = new Map();
+  for (const h of history || []) {
+    for (const line of h.ordu || []) {
+      const m = /^(.*) x(\d+)$/.exec(line);
+      if (m) total.set(m[1], (total.get(m[1]) || 0) + Number(m[2]));
+    }
+  }
+  return [...total.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, n]) => `${name} x${n}`);
+}
+
 function compactCard(c, history) {
   const s = c.stats;
+  const army = armyTendency(history);
   return {
     oyuncu: c.name,
     ulke: c.civTr,
@@ -45,14 +58,18 @@ function compactCard(c, history) {
       sonMaclar: s.games,
       kazanmaYuzdesi: s.winRate,
       favoriUlkeler: s.topCivs.map((t) => `${t.tr} ${t.games} maç %${t.winRate}`),
+      buUlkeyle: c.civSlug && s.byCiv[c.civSlug] ? `${s.byCiv[c.civSlug].games} maç %${s.byCiv[c.civSlug].winRate}` : 'bu ülkeyle neredeyse hiç oynamamış',
       onbesDkAltiKazanma: s.short.winRate,
       otuzDkUstuKazanma: s.long.winRate,
       erkenGalibiyetPayi: s.shortWinShare,
+      ortalamaKazanmaDk: s.avgWinMin,
+      ortalamaKaybetmeDk: s.avgLossMin,
       form: s.form,
       kontrolcu: s.controller,
     } : {}),
     notlar: c.insights.map((i) => i.text),
     ...(history ? { gecmisKarsilasmalar: history } : {}),
+    ...(army.length ? { bizeKarsiAgirlikliOrdu: army } : {}),
   };
 }
 
@@ -91,7 +108,7 @@ function buildCandidates(builds) {
   }));
 }
 
-function prematchContext({ scouting, myCiv, build, candidates = null, matches, loadAnalysis, mapName, localName }) {
+function prematchContext({ scouting, myCiv, build, candidates = null, specials = null, matches, loadAnalysis, mapName, localName }) {
   const enemyIds = scouting.enemies.map((c) => c.profileId);
   const hist = opponentHistory(enemyIds, matches, loadAnalysis);
   return {
@@ -100,6 +117,8 @@ function prematchContext({ scouting, myCiv, build, candidates = null, matches, l
     benimUlkem: myCiv?.tr || null,
     // Otomatik build: koç bu listeden rakiplere göre seçer; benimBuild şimdilik en yüksek puanlı.
     ...(candidates ? { buildSecenekleri: buildCandidates(candidates) } : {}),
+    // Serbest: koç özel build yazar; ülkenin özel birim/teknoloji/simge yapıları doğru isimlerle.
+    ...(specials ? { ulkeyeOzel: specials } : {}),
     benimBuild: buildOutline(build),
     takimim: scouting.allies.map((c) => compactCard(c)),
     rakipler: scouting.enemies.map((c) => compactCard(c, hist[c.profileId])),
@@ -156,7 +175,13 @@ function liveContext({ elapsedSec, hud, buildView, myCiv, plan, lastAssessment, 
       buildBitti: !buildView.next,
     } : null,
     rakipler: scouting ? scouting.enemies.map((c) => ({ oyuncu: c.name, ulke: c.civTr, notlar: c.insights.slice(0, 3).map((i) => i.text) })) : [],
-    macOncesiPlan: plan ? { ozet: plan.ozet, tahminler: plan.rakipTahminleri, kontra: plan.kontraOnerisi } : null,
+    macOncesiPlan: plan ? {
+      ozet: plan.ozet,
+      tahminler: plan.rakipTahminleri,
+      kontra: plan.kontraOnerisi,
+      // Serbest modda koçun yazdığı oyun stili ve zamanlama hedefleri: maç boyu buna sadık kal.
+      ...(plan.ozelBuild?.oyunStili ? { ozelOyunStili: plan.ozelBuild.oyunStili, kilitNoktalar: plan.ozelBuild.kilitNoktalar } : {}),
+    } : null,
     oncekiDegerlendirme: lastAssessment ? { sure: lastAssessment.at, durum: lastAssessment.durum, simdiYap: lastAssessment.simdiYap, uret: lastAssessment.uret, gelistir: lastAssessment.gelistir } : null,
   };
 }

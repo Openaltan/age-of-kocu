@@ -191,3 +191,18 @@ test('Gemini: yoğun/kotası dolu modelden sonrakine geçer', async () => {
   assert.strictEqual(await new AiCoach({ getProvider: () => p }).testConnection(), true);
   assert.deepStrictEqual(used, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']);
 });
+
+test('serbest modda plan şeması özel build ister; rakip tarzı ve geçmiş ordu vurgulanır', async () => {
+  const client = fakeClient(textReply({}));
+  const ai = claudeCoach(client);
+  await ai.prematchPlan({}, { custom: true });
+  await ai.prematchPlan({});
+  const [serbest, normal] = client.calls;
+  const s = serbest.output_config.format.schema;
+  assert.ok(s.required.includes('ozelBuild'));
+  assert.deepStrictEqual(s.properties.ozelBuild.properties.adimlar.items.required, ['saniye', 'yemek', 'odun', 'altin', 'tas', 'insaat', 'not']);
+  assert.match(serbest.messages[0].content[0].text, /SERBEST MOD/);
+  assert.ok(!normal.output_config.format.schema.required.includes('ozelBuild'));
+  assert.doesNotMatch(normal.messages[0].content[0].text, /SERBEST MOD/);
+  assert.match(normal.messages[0].content[0].text, /bizeKarsiAgirlikliOrdu/);
+});
