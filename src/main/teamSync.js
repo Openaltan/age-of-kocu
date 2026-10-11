@@ -148,8 +148,12 @@ function teamNotes(me, mates, elapsedSec) {
   for (const m of mates) {
     const s = m.status;
     if (!s) continue;
-    // Arkadaşın koçu "rakip gelebilir" dediyse ben de göreyim.
-    if (s.risk) out.push({ key: `team-risk-${m.id}`, level: 'danger', text: `${m.name}: ${s.risk}` });
+    // Arkadaşın üssünde gerçekten bir şey oluyorsa (riskKind 'gercek') tehlike; eski sürümler
+    // tahminleri de gönderdiği için türü belli olmayan risk "olası" olarak gösterilir.
+    if (s.risk) {
+      const real = s.riskKind === 'gercek';
+      out.push({ key: `team-risk-${m.id}`, level: real ? 'danger' : 'info', text: real ? `${m.name}: ${s.risk}` : `${m.name} (olası): ${s.risk}` });
+    }
     if (s.idle >= 3) out.push({ key: `team-idle-${m.id}`, level: 'info', text: `${m.name}: ${s.idle} köylü boşta` });
   }
   const known = mates.map((m) => m.status?.villagers).filter((v) => v != null);

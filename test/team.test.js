@@ -71,6 +71,20 @@ test('takım notları: arkadaşın riski, boştaki köylüsü ve köylüde geri 
     { id: '3', name: 'jx', status: { risk: null, idle: 4, villagers: 38 } },
   ];
   const notes = teamNotes({ villagers: 25 }, mates, 10 * 60).map((n) => n.text);
-  assert.deepStrictEqual(notes, ['Piro: Rakip gelebilir · sol', 'jx: 4 köylü boşta', 'Takımda en az köylü sende']);
+  // Türü belli olmayan risk (eski sürüm) tahmin sayılır.
+  assert.deepStrictEqual(notes, ['Piro (olası): Rakip gelebilir · sol', 'jx: 4 köylü boşta', 'Takımda en az köylü sende']);
   assert.strictEqual(teamNotes({ villagers: 25 }, mates, 5 * 60).length, 2); // ilk 8 dakikada kıyas yok
+  const real = teamNotes({}, [{ id: '2', name: 'Piro', status: { risk: 'Üssünde düşman · batı tarafı', riskKind: 'gercek' } }], 60);
+  assert.deepStrictEqual(real, [{ key: 'team-risk-2', level: 'danger', text: 'Piro: Üssünde düşman · batı tarafı' }]);
+});
+
+test('YZ uyarısı: tahmin "Olası" ve bilgi seviyesi, sadece gerçek olay takıma gider', () => {
+  const { warningNote } = require('../src/main/aiContext');
+  assert.deepStrictEqual(warningNote({ uyari: 'Baskın · altın madeninde', uyariTuru: 'tahmin', risk: 'yüksek' }), { level: 'info', text: 'Olası: Baskın · altın madeninde', share: false });
+  assert.deepStrictEqual(warningNote({ uyari: 'Rakip gelebilir · değirmen', uyariTuru: 'tahmin', risk: 'orta' }), { level: 'info', text: 'Rakip gelebilir · değirmen', share: false });
+  assert.deepStrictEqual(warningNote({ uyari: 'Saldırı · altın madeninde', uyariTuru: 'gercek', risk: 'yüksek' }), { level: 'danger', text: 'Saldırı · altın madeninde', share: true });
+  assert.deepStrictEqual(warningNote({ uyari: 'Ev kur', uyariTuru: 'eksik', risk: 'orta' }), { level: 'info', text: 'Ev kur', share: false });
+  assert.strictEqual(warningNote({ uyari: '', uyariTuru: 'yok' }), null);
+  // Türü olmayan eski yanıt: tahmin say.
+  assert.strictEqual(warningNote({ uyari: 'Altına baskın', risk: 'yüksek' }).text, 'Olası: Altına baskın');
 });

@@ -45,7 +45,7 @@ test('canlı değerlendirme: görsel + şema + yedek model ile istek atar', asyn
   const text = req.messages[0].content[1].text;
   assert.match(text, /Normal mod/);
   assert.match(text, /Görüntüler sırasıyla: 1\) oyuncunun tam ekranı/);
-  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'durum', 'simdiYap', 'uret', 'gelistir', 'okunanKoylu', 'dagilim', 'komutlar', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
+  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'uyariTuru', 'durum', 'simdiYap', 'uret', 'gelistir', 'okunanKoylu', 'dagilim', 'komutlar', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
 });
 
 test('yönet modunda istem sıralı komut ister; normal modda komutlar boş', async () => {
@@ -205,4 +205,45 @@ test('serbest modda plan şeması özel build ister; rakip tarzı ve geçmiş or
   assert.ok(!normal.output_config.format.schema.required.includes('ozelBuild'));
   assert.doesNotMatch(normal.messages[0].content[0].text, /SERBEST MOD/);
   assert.match(normal.messages[0].content[0].text, /bizeKarsiAgirlikliOrdu/);
+});
+
+test('Gemini: internet aramalı serbest metin; kaynaklar url_citation açıklamalarından', async () => {
+  const body = { steps: [
+    { type: 'google_search_call', arguments: { queries: ['aoe4 flankwoods strategy'] } },
+    { type: 'model_output', content: [{ type: 'text', text: 'Flankwoods kapalı bir harita.', annotations: [
+      { type: 'url_citation', url: 'https://a.example/1', title: 'Rehber', start_index: 0, end_index: 10 },
+      { type: 'url_citation', url: 'https://a.example/1', title: 'Rehber' },
+      { type: 'url_citation', url: 'https://b.example/2', title: 'Yama notları' },
+    ] }] },
+  ] };
+  const f = fakeFetch(200, body);
+  const ai = geminiCoach(f);
+  const res = await ai.research({ mapName: 'Saklı Ormanlar (Flankwoods)', kind: 'rm_2v2', myCiv: 'Zhu Xi', enemyCivs: ['Moğollar'], allyCivs: [] });
+  assert.strictEqual(res.text, 'Flankwoods kapalı bir harita.');
+  assert.deepStrictEqual(res.sources, [{ url: 'https://a.example/1', title: 'Rehber' }, { url: 'https://b.example/2', title: 'Yama notları' }]);
+  const req = f.calls[0].body;
+  assert.deepStrictEqual(req.tools, [{ type: 'google_search' }]);
+  assert.strictEqual(req.response_format, undefined);
+  assert.match(req.input[0].text, /Saklı Ormanlar \(Flankwoods\)/);
+});
+
+test('sohbet: oyuncu verisi ilk mesajda, geçmiş sırayla; Claude araması olmadan cevaplar', async () => {
+  const client = fakeClient({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Feodal geç kaldı.' }] });
+  const res = await claudeCoach(client).chat([{ role: 'user', text: 'Neden kaybettik?' }], { sonMaclarim: [] });
+  assert.deepStrictEqual(res, { text: 'Feodal geç kaldı.', sources: [] });
+  const req = client.calls[0];
+  assert.deepStrictEqual(req.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.match(req.messages[0].content, /Oyuncu verisi/);
+  assert.strictEqual(req.messages[2].content, 'Neden kaybettik?');
+  assert.strictEqual(req.output_config.format, undefined);
+  // Gemini: konuşma tek metne dökülür, arama açık.
+  const f = fakeFetch(200, { steps: [{ content: [{ type: 'text', text: 'Cevap' }] }] });
+  await geminiCoach(f).chat([{ role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], {});
+  const g = f.calls[0].body;
+  assert.deepStrictEqual(g.tools, [{ type: 'google_search' }]);
+  assert.match(g.input[0].text, /Koç: b[\s\S]*Yeni mesaj:\nOyuncu: c$/);
+});
+
+test('araştırma sadece Gemini ile yapılır', async () => {
+  assert.strictEqual(await claudeCoach(fakeClient({})).research({ enemyCivs: [], allyCivs: [] }), null);
 });

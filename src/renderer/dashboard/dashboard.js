@@ -104,6 +104,7 @@ function renderLive() {
       s.buildAuto.reason ? el('p', { class: 'muted', text: s.buildAuto.reason }) : null,
       s.buildAuto.kilitNoktalar?.length ? el('ul', {}, s.buildAuto.kilitNoktalar.map((k) => el('li', { text: k }))) : null,
     ) : null,
+    intelBox(s.intel),
     s.phase === 'playing' ? el('div', { id: 'live-step' }) : null,
     s.phase === 'playing' ? [el('h2', { text: 'Takımım' }), el('div', { id: 'live-team' }, teamBox(s.team))] : null,
     aiLiveSection(s),
@@ -111,6 +112,29 @@ function renderLive() {
     sc ? el('div', { class: 'grid' }, sc.enemies.map((c) => playerCard(c))) :
       el('p', { class: 'muted', text: s.scoutingError ? `Analiz başarısız: ${s.scoutingError}` : 'Rakipler analiz ediliyor…' }),
     sc && sc.allies.length ? [el('h2', { text: 'Takımın' }), el('div', { class: 'grid' }, sc.allies.map((c) => playerCard(c, { ally: true })))] : null,
+  );
+}
+
+// Harita ve güncel meta: AoE4World istatistikleri ve internet araştırması (koçun bildikleri).
+// Panel sık yeniden çizildiği için açık/kapalı durumu burada tutulur.
+let intelOpen = false;
+
+function intelBox(intel) {
+  if (!intel?.meta) return null;
+  const m = intel.meta;
+  const rate = (r) => (r ? `%${r.kazanma} kazanma · %${r.secilme} seçilme` : 'veri yok');
+  return el('details', { class: 'box intel', open: intelOpen, ontoggle: (e) => { intelOpen = e.target.open; } },
+    el('summary', {}, el('b', { text: 'Harita ve meta: ' }), m.harita?.ad || intel.mapLocal || 'harita bilinmiyor',
+      m.harita?.ortalamaMacDk ? ` · ortalama maç ${m.harita.ortalamaMacDk} dk` : ''),
+    m.harita?.haritadaEnIyi5?.length ? el('p', {}, el('b', { text: 'Bu haritada en çok kazananlar: ' }), m.harita.haritadaEnIyi5.join(' · ')) : null,
+    m.benimUlkem ? el('p', {}, el('b', { text: `${m.benimUlkem.ulke}: ` }), rate(m.benimUlkem.genel), m.benimUlkem.buHaritada ? ` · bu haritada ${m.benimUlkem.buHaritada}` : '') : null,
+    m.rakipUlkeler?.length ? el('ul', {}, m.rakipUlkeler.map((r) => el('li', {}, el('b', { text: `${r.ulke}: ` }), rate(r.genel), r.buHaritada ? ` · bu haritada ${r.buHaritada}` : ''))) : null,
+    intel.research ? [
+      el('p', { class: 'muted', text: 'İnternetten araştırma:' }),
+      el('div', { class: 'research', text: intel.research.text }),
+      intel.research.sources?.length ? el('p', { class: 'muted' }, 'Kaynaklar: ', intel.research.sources.map((src, i) => [i ? ' · ' : '', el('a', { href: src.url, target: '_blank', text: src.title })])) : null,
+    ] : null,
+    el('p', { class: 'muted', text: 'İstatistikler AoE4World\'ün son yamalardaki verilerinden.' }),
   );
 }
 
@@ -489,6 +513,7 @@ function aiSettingsSection() {
       toggle('aiLive', 'Maç içi otomatik değerlendirme'),
       toggle('aiVision', 'Değerlendirmede ekran görüntüsünü gönder (koç ekranını görsün)'),
       toggle('aiReport', 'Maç sonu koç raporu'),
+      toggle('aiResearch', 'Maç öncesi internetten harita ve güncel meta araştırması (Gemini + Google Arama; aynı harita/ülkeler için 3 gün saklanır)'),
       toggle('aiTranslate', 'Build notlarını Türkçeleştir'),
       el('label', { class: 'field' }, 'Sakin anlarda değerlendirme sıklığı (önemli anlarda ve savaşta koç bunu beklemez)',
         el('select', { onchange: async (e) => { settings = await api.updateSettings({ aiLiveIntervalMin: Number(e.target.value) }); } },
@@ -663,6 +688,7 @@ async function renderTeam() {
       el('button', { class: 'btn', text: 'Başka oyuncu ara', onclick: () => show('search') }),
     ),
     el('p', { class: 'lead', text: 'Son 50 maçtan çıkarılan oyun tarzı. Koç, oynadıkça bu veriye göre öneri verir.' }),
+    ...(await reviewSection()),
     ...(await profileSection(state.localProfileId, null, 'Sen')),
     ...trendSection(),
     ...(await Promise.all(allies.map((a) => profileSection(a.profileId, a.name, `${a.name} · ${a.n} maç birlikte`)))).flat(),
@@ -825,7 +851,113 @@ function renderSettings() {
   );
 }
 
-const RENDER = { live: renderLive, analysis: renderAnalysis, builds: renderBuilds, team: renderTeam, search: renderSearch, history: renderHistory, screen: () => renderCalibration(views.screen), settings: renderSettings };
+// ---------- Koça Sor (sohbet) ----------
+let chatBusy = false;
+let chatDraft = '';
+
+const CHAT_EXAMPLES = [
+  'Son maçta neden kaybettik?',
+  'Fransızlara karşı Zhu Xi ile ne açmalıyım?',
+  'Bu haritada nasıl oynamalıyız?',
+  'Güncel yamada en güçlü takım ülkeleri hangileri?',
+];
+
+async function renderChat() {
+  const v = views.chat;
+  const log = await api.getChat();
+  const list = el('div', { class: 'chat-log' },
+    log.length ? log.map(chatBubble) : el('div', { class: 'box' },
+      el('p', { class: 'muted', text: 'Koça maçların, rakiplerin, haritalar ya da güncel meta hakkında soru sor. Koç maç geçmişini, analizlerini ve (maçtaysan) şu anki maçı bilir; gerekirse internette arar.' }),
+      el('div', { class: 'row' }, CHAT_EXAMPLES.map((q) => el('button', { class: 'btn', text: q, onclick: () => sendChat(q) }))),
+    ),
+    chatBusy ? el('div', { class: 'chat-msg coach muted', text: 'Koç yazıyor…' }) : null,
+  );
+  const input = el('textarea', { class: 'chat-input', rows: 2, placeholder: state.ai?.available ? 'Koça sor… (Enter gönderir, Shift+Enter yeni satır)' : 'Önce Ayarlar › Yapay Zekâ Koç bölümünden anahtar gir', disabled: chatBusy || !state.ai?.available });
+  input.value = chatDraft;
+  input.addEventListener('input', () => { chatDraft = input.value; });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChat(input.value);
+    }
+  });
+  const msg = el('p', { class: 'res-loss', id: 'chat-err' });
+  fill(v,
+    el('div', { class: 'match-head' },
+      el('h1', { text: 'Koça Sor' }),
+      log.length ? el('button', { class: 'btn', text: 'Sohbeti temizle', onclick: async () => { await api.clearChat(); renderChat(); } }) : null,
+    ),
+    list,
+    el('div', { class: 'chat-compose' }, input, el('button', { class: 'btn primary', text: 'Gönder', disabled: chatBusy, onclick: () => sendChat(input.value) })),
+    msg,
+  );
+  list.scrollTop = list.scrollHeight;
+  if (!chatBusy) input.focus();
+}
+
+function chatBubble(m) {
+  return el('div', { class: `chat-msg ${m.role === 'assistant' ? 'coach' : 'me'}` },
+    el('div', { class: 'chat-text', text: m.text }),
+    m.sources?.length ? el('div', { class: 'chat-src' }, 'Kaynaklar: ', m.sources.map((s, i) => [i ? ' · ' : '', el('a', { href: s.url, target: '_blank', text: s.title })])) : null,
+  );
+}
+
+async function sendChat(text) {
+  const t = String(text || '').trim();
+  if (!t || chatBusy) return;
+  chatBusy = true;
+  chatDraft = t;
+  await renderChat();
+  try {
+    await api.sendChat(t);
+    chatDraft = '';
+  } catch (err) {
+    chatBusy = false;
+    await renderChat();
+    const e = document.getElementById('chat-err');
+    if (e) e.textContent = `Gönderilemedi: ${err.message.replace(/^.*Error: /, '')}`;
+    return;
+  }
+  chatBusy = false;
+  if (current === 'chat') renderChat();
+}
+
+// ---------- Gelişim analizi (Profilim) ----------
+let reviewBusy = false;
+
+async function reviewSection() {
+  const saved = await api.getReview();
+  const r = saved?.review;
+  const btn = el('button', { class: 'btn primary', text: reviewBusy ? 'Koç maçlarını inceliyor…' : r ? 'Yeniden analiz et' : 'Maçlarımı analiz et: hatalarım ve ulus önerisi', disabled: reviewBusy || !state.ai?.available, onclick: async () => {
+    reviewBusy = true;
+    renderTeam();
+    try {
+      await api.runReview();
+    } catch (err) {
+      alert(`Analiz yapılamadı: ${err.message.replace(/^.*Error: /, '')}`);
+    } finally {
+      reviewBusy = false;
+      if (current === 'team') renderTeam();
+    }
+  } });
+  const head = [el('h2', { text: 'Koçun gelişim analizi' }), el('div', { class: 'row' }, btn,
+    saved ? el('span', { class: 'muted', text: `${new Date(saved.at).toLocaleDateString('tr-TR')} · ${saved.basedOn.analyzed} analizli maç, ${saved.basedOn.matches} maç${saved.basedOn.mates?.length ? ` · takım: ${saved.basedOn.mates.join(', ')}` : ''}` }) : null,
+    !state.ai?.available ? el('span', { class: 'muted', text: 'Yapay zekâ anahtarı gerekli (Ayarlar).' }) : null)];
+  if (!r) return [...head, el('p', { class: 'muted', text: 'Koç kaydedilen maçlarına (kayıt analizleri) ve AoE4World geçmişine bakıp tekrarlayan hatalarını, oyun tarzını, sana uyan ülkeleri ve takım kompozisyonunu çıkarır. Maç biriktikçe daha isabetli olur.' })];
+  return [...head, el('div', { class: 'box ai-report' },
+    el('p', { class: 'ai-lead', text: r.ozet }),
+    el('p', {}, el('b', { text: 'Oyun tarzın: ' }), r.oyunTarzi),
+    el('h3', { text: 'Güçlü yönlerin' }), el('ul', {}, r.gucluYonler.map((t) => el('li', { text: t }))),
+    el('h3', { text: 'Tekrarlayan hataların' }),
+    el('ol', {}, r.tekrarlayanHatalar.map((h) => el('li', {}, el('b', { text: h.hata }), el('div', { class: 'muted', text: h.kanit }), el('div', {}, '→ ', h.cozum)))),
+    el('h3', { text: 'Sana uyan ülkeler' }),
+    el('ul', {}, r.ulusOnerileri.map((u) => el('li', {}, el('b', { text: `${u.ulus}: ` }), u.neden, el('div', { class: 'muted', text: u.nasilOyna })))),
+    el('h3', { text: 'Takım kompozisyonu' }), el('p', { text: r.takimKompozisyonu }),
+    el('h3', { text: 'Çalışma planı' }), el('ul', {}, r.calismaPlani.map((t) => el('li', { text: t }))),
+  )];
+}
+
+const RENDER = { live: renderLive, analysis: renderAnalysis, builds: renderBuilds, team: renderTeam, chat: renderChat, search: renderSearch, history: renderHistory, screen: () => renderCalibration(views.screen), settings: renderSettings };
 
 // ---------- Olaylar ----------
 api.on('state', (s) => {

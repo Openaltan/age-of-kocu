@@ -23,6 +23,7 @@ const { MinimapWatcher, scoreboardRows, PALETTE, hueDist, hsv } = require('./min
 const { LiveMonitor } = require('./liveEvents');
 const { BaseLedger, AGE_NAMES } = require('./baseLedger');
 const logger = require('./log');
+const { resolveMap, metaSummary, metaBrief } = require('./meta');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const TICK_MS = 500;
@@ -38,6 +39,8 @@ const LIVE_STUCK_MS = 150 * 1000; // bundan uzun süren çağrı takılmış say
 const LIVE_CALL_TIMEOUT_MS = 100 * 1000; // tek değerlendirmenin (görüntü + YZ) en uzun süresi
 const CAPTURE_TIMEOUT_MS = 8 * 1000;
 const KEEP_GUIDANCE_SEC = 15 * 60; // koç notları yenisi gelene kadar kalır (en fazla 15 dk)
+const INTEL_WAIT_MS = 25 * 1000; // maç öncesi plan, harita/meta için en fazla bu kadar bekler
+const RESEARCH_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const IDENTIFY_RETRY_MS = 60 * 1000;
 const IDENTIFY_COOLDOWN_MS = 15 * 1000;
 
@@ -79,6 +82,7 @@ let liveSeq = 0; // takılan YZ çağrısının geç gelen sonucunu yok saymak i
 let lastLiveOkAt = 0; // son başarılı YZ değerlendirmesi (ms)
 let lastLiveError = null;
 let stepStartedAt = 0; // şimdiki build adımının başladığı maç saniyesi
+const mapLocalById = new Map(); // matchId -> oyunun yazdığı (Türkçe olabilen) harita adı
 const notes = new NoteBoard();
 let hudNotes = [];
 let lastNotesJson = '';
@@ -114,6 +118,7 @@ const state = {
   version: app.getVersion(),
   update: null, // { status: 'downloading' | 'ready', version, percent }
   buildAuto: null, // otomatik build: { status: 'waiting' | 'done', name, reason, source }
+  intel: null, // harita ve meta: { mapLocal, map, meta, research }
   ai: { available: false, plan: null, planStatus: null, planError: null, live: [], liveStatus: null, liveError: null, combat: false, players: null },
 };
 
@@ -215,6 +220,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
   state.match = match;
   state.scouting = null;
   state.scoutingError = null;
+  state.intel = null;
   state.cardsVisible = true;
   notes.clear();
   hudNotes = [];
@@ -225,6 +231,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
   pushNotes();
 
   const buildReady = loadBuildFor(match).then(pushState);
+  const intelReady = gatherIntel(match);
   try {
     const result = await scout.scoutMatch(match, state.localProfileId);
     if (state.match !== match) return; // bu arada yeni maç başladıysa eski sonucu at
@@ -235,7 +242,12 @@ async function onMatchLoading(match, { simulated = false } = {}) {
     if (state.phase === 'playing') coach.alerts = buildAlerts(result);
     // Otomatik build seçimi için aday listesi hazır olsun.
     await buildReady.catch(() => {});
+    state.intel = await withTimeout(intelReady, INTEL_WAIT_MS, 'harita/meta gecikti').catch((err) => {
+      console.warn('harita/meta:', err.message);
+      return null;
+    });
     if (state.match !== match) return;
+    pushState();
     if (!aiOn('aiPrematch')) autoBuildByRule();
     runPrematch(match);
   } catch (err) {
@@ -341,6 +353,7 @@ function sendTeamStatus(elapsed) {
     idle: h?.idle ?? null,
     // YZ uyarısı yoksa yerel algılayıcının tehlike notu (ör. "Üssünde düşman · güney tarafı").
     risk: aiRisk || monitor.notes().find((n) => n.level === 'danger')?.text || null,
+    riskKind: 'gercek', // bu sürüm sadece görülen tehlikeyi gönderir (tahminler gönderilmez)
     notes: hudNotes.filter((n) => n.level === 'danger').map((n) => n.text).slice(0, 3),
   });
 }
@@ -395,6 +408,62 @@ function readMapName() {
   }
 }
 
+// ---------- Harita ve güncel meta ----------
+// AoE4World'ün halka açık istatistikleri (ulus/harita kazanma oranları) + isteğe bağlı internet
+// araştırması (Gemini + Google Arama). Araştırma aynı harita ve ülkeler için 3 gün önbelleklenir.
+
+function matchKind(match) {
+  const humans = match.players.length;
+  const per = Math.max(1, Math.round(humans / 2));
+  return humans <= 2 ? 'rm_1v1' : `rm_${per}v${per}`;
+}
+
+async function gatherIntel(match) {
+  const local = readMapName();
+  if (match.matchId && local) mapLocalById.set(match.matchId, local);
+  const me = myPlayer(match);
+  const slugOf = (p) => civs.fromLogCode(p.civCode)?.slug || null;
+  const enemies = me ? match.players.filter((p) => p.team !== me.team) : [];
+  const allies = me ? match.players.filter((p) => p.team === me.team && p.profileId !== me.profileId) : [];
+  const kind = matchKind(match);
+  const [civRows, mapList] = await Promise.all([
+    aoe4world.civStats(kind).catch((err) => { console.warn('meta (ülkeler):', err.message); return []; }),
+    aoe4world.mapStats(kind).catch((err) => { console.warn('meta (haritalar):', err.message); return []; }),
+  ]);
+  const map = resolveMap(local, store.settings.learnedMapNames || {}, mapList);
+  const mapCivRows = map?.id ? await aoe4world.mapCivStats(kind, map.id).catch(() => []) : [];
+  const meta = metaSummary({ kind, mySlug: me ? slugOf(me) : null, enemySlugs: enemies.map(slugOf), allySlugs: allies.map(slugOf), civRows, map, mapCivRows });
+  let research = null;
+  if (aiOn('aiResearch')) {
+    research = await cachedResearch({
+      mapName: map?.en ? `${local} (${map.en})` : local,
+      kind,
+      myCiv: me ? civs.trName(slugOf(me) || me.civCode) : null,
+      enemyCivs: enemies.map((p) => civs.trName(slugOf(p) || p.civCode)),
+      allyCivs: allies.map((p) => civs.trName(slugOf(p) || p.civCode)),
+    }).catch((err) => { console.warn('internet araştırması:', err.message); return null; });
+  }
+  console.log(`harita/meta: ${meta.harita?.ad || 'harita bilinmiyor'} · ${civRows.length} ülke istatistiği · araştırma ${research ? 'var' : 'yok'}`);
+  return { mapLocal: local, map, meta, research };
+}
+
+async function cachedResearch(q) {
+  const key = require('crypto').createHash('sha1').update(JSON.stringify([q.mapName, q.kind, q.myCiv, [...q.enemyCivs].sort(), [...q.allyCivs].sort()])).digest('hex').slice(0, 16);
+  const file = path.join(app.getPath('userData'), 'cache', `research-${key}.json`);
+  try {
+    const hit = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Date.now() - hit.at < RESEARCH_TTL_MS) return hit;
+  } catch {
+    // önbellekte yok
+  }
+  const res = await ai.research(q);
+  if (!res) return null;
+  const out = { at: Date.now(), query: q, text: res.text, sources: res.sources };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(out));
+  return out;
+}
+
 async function runPrematch(match) {
   if (!aiOn('aiPrematch') || !state.scouting) return;
   Object.assign(state.ai, { plan: null, planStatus: 'running', planError: null, live: [] });
@@ -408,7 +477,8 @@ async function runPrematch(match) {
       specials: aiContext.civSpecials(gamedata, civs.fromSlug(state.myCiv?.slug)?.data, 3),
       matches: store.matches,
       loadAnalysis: (id) => postgame.load(id),
-      mapName: readMapName(),
+      mapName: state.intel?.meta?.harita?.ad || readMapName(),
+      intel: state.intel,
       localName: myPlayer(match)?.name || null,
     });
     const custom = state.buildAuto?.status === 'waiting' && state.buildAuto.mode === 'serbest';
@@ -552,6 +622,7 @@ async function runLive({ manual = false, trigger = null } = {}) {
       specials: aiContext.civSpecials(gamedata, civs.fromSlug(state.myCiv?.slug)?.data, ledger.age || 1),
       myColor: me?.renk || null,
       localName: myPlayer(state.match)?.name || null,
+      intel: metaBrief(state.intel),
     });
     const images = await liveImages();
     console.log(`YZ bakıyor: ${trigger?.reason || (manual ? 'oyuncu sordu' : 'periyodik')}${combat ? ' · savaş' : ''}${command ? ' · yönet' : ''} · ${images.length} görüntü`);
@@ -578,9 +649,11 @@ async function runLive({ manual = false, trigger = null } = {}) {
     // Sade overlay: her değerlendirme bir öncekinin notlarının yerini alır; yenisi gelene kadar
     // (oyuncu uygulayabilsin diye) kalır. Koç uzun süre bakamazsa "bakamadı" notu bunu söyler.
     const ttl = KEEP_GUIDANCE_SEC;
-    aiRisk = res.uyari && res.risk !== 'düşük' ? res.uyari : null;
+    // Tahmin "Olası:" diye ve bilgi seviyesinde görünür; takıma sadece gerçekten görülen tehlike gider.
+    const warn = aiContext.warningNote(res);
+    aiRisk = warn?.share ? warn.text : null;
     notes.remove('ai-err');
-    setOrRemove('ai-risk', res.risk === 'yüksek' ? 'danger' : 'info', res.uyari, Math.round(liveIntervalMs() / 1000) + 60);
+    setOrRemove('ai-risk', warn?.level || 'info', warn?.text || '', Math.round(liveIntervalMs() / 1000) + 60);
     notes.removeWhere((n) => n.key.startsWith('cmd-'));
     if (command) {
       // Yönet modu: sıralı komutlar; ayrı "şimdi/üret/geliştir" notlarına gerek yok.
@@ -786,6 +859,129 @@ function onFrame(img) {
   }
 }
 
+// ---------- Gelişim analizi ve sohbet ----------
+
+function userFile(name) {
+  return path.join(app.getPath('userData'), name);
+}
+
+function readUserJson(name, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(userFile(name), 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+// En sık birlikte oynadığım takım arkadaşları (en az 2 maç).
+function frequentMates(limit = 2) {
+  const count = new Map();
+  for (const m of store.matches) {
+    const me = m.players.find((p) => p.profileId === state.localProfileId);
+    if (!me) continue;
+    for (const p of m.players) {
+      if (p.team !== me.team || !p.profileId || p.profileId === me.profileId) continue;
+      const c = count.get(p.profileId) || { profileId: p.profileId, name: p.name, n: 0 };
+      c.n++;
+      count.set(p.profileId, c);
+    }
+  }
+  return [...count.values()].filter((c) => c.n >= 2).sort((a, b) => b.n - a.n).slice(0, limit);
+}
+
+// En çok oynadığım maç türü (meta istatistiği için).
+function usualKind() {
+  const kinds = new Map();
+  for (const m of store.matches.slice(0, 30)) {
+    const k = m.kind || matchKind(m);
+    kinds.set(k, (kinds.get(k) || 0) + 1);
+  }
+  return [...kinds.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'rm_3v3';
+}
+
+// Maçlarımdan hatalar, oyun tarzı, ulus önerisi ve takım kompozisyonu.
+async function runReview() {
+  if (!state.localProfileId) throw new Error('Profilin henüz bulunamadı');
+  if (!ai.available()) throw new Error('Yapay zekâ anahtarı girilmemiş (Ayarlar › Yapay Zekâ Koç)');
+  const kind = usualKind();
+  const mates = frequentMates();
+  const blank = (profileId, name) => ({ profileId, name, team: null, civCode: null });
+  const [me, ...mateCards] = await Promise.all([blank(state.localProfileId, null), ...mates.map((m) => blank(m.profileId, m.name))].map((p) => scout.scoutPlayer(p, kind)));
+  const civRows = await aoe4world.civStats(kind).catch(() => []);
+  const context = aiContext.reviewContext({
+    matches: store.matches,
+    loadAnalysis: (id) => postgame.load(id),
+    localProfileId: state.localProfileId,
+    me,
+    mates: mateCards,
+    civRows,
+    civName: (c) => civs.trName(c),
+  });
+  console.log(`gelişim analizi istendi: ${context.kayitAnalizliMaclarim.length} analizli maç, ${context.uygulamadakiSonMaclarim.length} maç, ${mateCards.length} takım arkadaşı`);
+  const review = await ai.playerReview(context);
+  const out = { at: Date.now(), kind, review, basedOn: { analyzed: context.kayitAnalizliMaclarim.length, matches: context.uygulamadakiSonMaclarim.length, mates: mateCards.map((c) => c.name) } };
+  fs.writeFileSync(userFile('review.json'), JSON.stringify(out));
+  return out;
+}
+
+let chatHistory = null; // [{ role: 'user' | 'assistant', text, sources?, at }]
+const CHAT_KEEP = 60;
+const CHAT_CONTEXT_TURNS = 12;
+
+function chatLog() {
+  chatHistory ||= readUserJson('chat.json', []);
+  return chatHistory;
+}
+
+// Sohbette koçun bildikleri: maç geçmişim, son maç analizi, gelişim raporu ve (varsa) şu anki maç.
+function chatContext() {
+  const me = (m) => m.players.find((p) => p.profileId === state.localProfileId);
+  const recent = store.matches.slice(0, 15).map((m) => ({
+    sonuc: m.result === 'win' ? 'galibiyet' : m.result === 'loss' ? 'mağlubiyet' : null,
+    ulke: me(m) ? civs.trName(me(m).civCode) : null,
+    harita: m.map || m.mapLocal || null,
+    dk: m.durationSec ? Math.round(m.durationSec / 60) : null,
+    rakipler: m.players.filter((p) => me(m) && p.team !== me(m).team).map((p) => `${p.name} (${civs.trName(p.civCode)})`),
+    ...(m.analysisSummary ? { analiz: { feodal: mmss(m.analysisSummary.feudalAt), merkezBostaIlk10: mmss(m.analysisSummary.tcIdleFirst10), koylu10dk: m.analysisSummary.villagersAt10, ilkAsker: mmss(m.analysisSummary.firstMilitaryAt), apm: m.analysisSummary.apm } } : {}),
+  }));
+  const last = store.matches.find((m) => m.hasAnalysis);
+  const lastAnalysis = last ? postgame.load(last.matchId) : null;
+  const review = readUserJson('review.json', null);
+  const inMatch = state.phase === 'loading' || state.phase === 'playing';
+  return {
+    ben: myPlayer(state.match)?.name || store.matches.map(me).find(Boolean)?.name || null,
+    sonMaclarim: recent,
+    sonAnalizliMac: lastAnalysis ? { harita: last.map, sonuc: last.result, tespitler: lastAnalysis.findings.map((x) => x.text), koçRaporu: lastAnalysis.aiReport?.ozet || null } : null,
+    gelisimRaporu: review ? { tarih: new Date(review.at).toISOString().slice(0, 10), ...review.review } : null,
+    suAnkiMac: inMatch ? {
+      faz: state.phase,
+      sure: state.phase === 'playing' ? mmss(coach.elapsed()) : null,
+      ulkem: state.myCiv?.tr || null,
+      build: state.build?.name || null,
+      rakipler: state.scouting ? state.scouting.enemies.map((c) => ({ oyuncu: c.name, ulke: c.civTr, notlar: c.insights.slice(0, 3).map((i) => i.text) })) : [],
+      haritaVeMeta: metaBrief(state.intel),
+      plan: state.ai.plan?.ozet || null,
+      sonDegerlendirme: state.ai.live[0] ? { durum: state.ai.live[0].durum, simdiYap: state.ai.live[0].simdiYap } : null,
+    } : null,
+  };
+}
+
+async function chatSend(text) {
+  const msg = String(text || '').trim().slice(0, 2000);
+  if (!msg) throw new Error('Boş mesaj');
+  if (!ai.available()) throw new Error('Yapay zekâ anahtarı girilmemiş (Ayarlar › Yapay Zekâ Koç)');
+  const log = chatLog();
+  // Sohbet her zaman oyuncunun mesajıyla başlamalı ve sırayla ilerlemeli.
+  let turns = log.slice(-CHAT_CONTEXT_TURNS).map(({ role, text: t }) => ({ role, text: t }));
+  while (turns.length && turns[0].role !== 'user') turns.shift();
+  turns = [...turns, { role: 'user', text: msg }];
+  const res = await ai.chat(turns, chatContext());
+  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: res.sources || [], at: Date.now() });
+  chatHistory = log.slice(-CHAT_KEEP);
+  fs.writeFileSync(userFile('chat.json'), JSON.stringify(chatHistory));
+  return chatHistory;
+}
+
 async function runReport(matchId) {
   const analysis = postgame.load(matchId);
   if (!analysis) throw new Error('Bu maçın analizi yok');
@@ -963,6 +1159,7 @@ function saveMatch(match) {
     myTeam: me ? me.team : null,
     result: me ? match.results[me.profileId] || null : null,
     players: match.players.map((p) => ({ ...p, result: match.results[p.profileId] || null })),
+    ...(mapLocalById.has(match.matchId) ? { mapLocal: mapLocalById.get(match.matchId) } : {}),
     scouting: state.scouting && state.scouting.matchId === match.matchId ? summarizeScouting(state.scouting) : null,
   });
 }
@@ -988,7 +1185,10 @@ function scheduleAoe4WorldSync(match, { firstDelayMs = AOE4WORLD_SYNC_DELAYS_MS[
         const lp = match.players.find((p) => p.profileId === t.player.profile_id);
         if (lp && civs.learnLogCode(lp.civCode, t.player.civilization)) learned[lp.civCode] = t.player.civilization;
       }
-      store.updateSettings({ learnedCivCodes: learned });
+      const local = mapLocalById.get(match.matchId) || store.matches.find((m) => m.matchId === match.matchId)?.mapLocal;
+      const maps = { ...(store.settings.learnedMapNames || {}) };
+      if (local && game.map && maps[local] !== game.map) maps[local] = game.map;
+      store.updateSettings({ learnedCivCodes: learned, learnedMapNames: maps });
       store.saveMatch({ matchId: match.matchId, map: game.map, kind: game.kind, aoe4world: true });
       broadcast('matches', store.matches);
     } catch {
@@ -1338,7 +1538,7 @@ function registerIpc() {
     const allowed = {};
     if ('overlaySide' in patch) allowed.overlaySide = patch.overlaySide === 'left' ? 'left' : 'right';
     if ('screenReadingEnabled' in patch) allowed.screenReadingEnabled = Boolean(patch.screenReadingEnabled);
-    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate']) if (k in patch) allowed[k] = Boolean(patch[k]);
+    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate', 'aiResearch']) if (k in patch) allowed[k] = Boolean(patch[k]);
     if ('aiLiveIntervalMin' in patch) allowed.aiLiveIntervalMin = Math.min(10, Math.max(1, Number(patch.aiLiveIntervalMin) || 3));
     if ('aiProvider' in patch) allowed.aiProvider = patch.aiProvider === 'claude' ? 'claude' : 'gemini';
     if ('overlayMode' in patch) allowed.overlayMode = patch.overlayMode === 'detailed' ? 'detailed' : 'simple';
@@ -1439,6 +1639,15 @@ function registerIpc() {
   ipcMain.handle('ai:test', () => ai.testConnection());
   ipcMain.handle('ai:ask', () => runLive({ manual: true }));
   ipcMain.handle('ai:report', (_e, matchId) => runReport(Number(matchId)));
+  ipcMain.handle('review:get', () => readUserJson('review.json', null));
+  ipcMain.handle('review:run', () => runReview());
+  ipcMain.handle('chat:get', () => chatLog());
+  ipcMain.handle('chat:send', (_e, text) => chatSend(text));
+  ipcMain.handle('chat:clear', () => {
+    chatHistory = [];
+    fs.writeFileSync(userFile('chat.json'), '[]');
+    return chatHistory;
+  });
   ipcMain.handle('sim:start', () => simulateMatch());
   ipcMain.handle('sim:stop', () => stopSimulation());
   ipcMain.handle('coach:shift', (_e, delta) => coach.shiftStep(Math.sign(delta)));

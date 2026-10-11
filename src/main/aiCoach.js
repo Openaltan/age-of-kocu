@@ -48,6 +48,9 @@ const SCHEMAS = {
   }),
   live: obj({
     uyari: str,
+    // gercek: şu an görülen/olan (ekranda düşman askeri, olaylar listesinde kayıp/üssünde düşman);
+    // tahmin: olabilecek; eksik: oyuncunun kendi eksiği (ev, köylü, altın bitiyor); yok: uyarı yok.
+    uyariTuru: { type: 'string', enum: ['gercek', 'tahmin', 'eksik', 'yok'] },
     durum: str,
     simdiYap: strArr,
     uret: strArr,
@@ -90,7 +93,25 @@ const SCHEMAS = {
     gelecekMac: str,
   }),
   translate: obj({ adimlar: { type: 'array', items: obj({ notlar: strArr }) } }),
+  // Oyuncunun maçlarından gelişim analizi ve ulus önerisi.
+  review: obj({
+    ozet: str,
+    oyunTarzi: str,
+    gucluYonler: strArr,
+    tekrarlayanHatalar: { type: 'array', items: obj({ hata: str, kanit: str, cozum: str }) },
+    ulusOnerileri: { type: 'array', items: obj({ ulus: str, neden: str, nasilOyna: str }) },
+    takimKompozisyonu: str,
+    calismaPlani: strArr,
+  }),
 };
+
+// Sohbet: koçla serbest konuşma. Canlı koçun "kısa emir" kuralları burada geçerli değil.
+const CHAT_SYSTEM = `Sen Age of Empires IV için profesyonel bir koçsun; Türk bir ranked takım oyuncusuyla sohbet ediyorsun.
+- Türkçe, samimi ama net yaz; oyunun Türkçe terimlerini kullan.
+- Cevap kısa olsun (genelde 3-8 cümle ya da madde); oyuncu ayrıntı isterse uzat.
+- Sana verilen oyuncu verisine (maç geçmişi, analizler, gelişim raporu, şu anki maç) dayan; veri yoksa bunu söyle, uydurma.
+- Güncel meta, yama notları, harita ya da build gerekiyorsa internette ara ve güncel bilgiyle cevap ver.
+- Hile önerme; oyunun kurallarına ve adil oyuna uygun kal.`;
 
 class AiError extends Error {}
 
@@ -135,6 +156,21 @@ class ClaudeProvider {
     if (res.stop_reason === 'refusal') throw new AiError('Model isteği reddetti');
     if (res.stop_reason === 'max_tokens') throw new AiError('Yanıt yarıda kesildi');
     return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  }
+
+  // Serbest metin cevap (sohbet). İnternet araması bu sağlayıcıda kullanılmıyor.
+  async completeText({ system, messages, maxTokens = 4000 }) {
+    const res = await this.api().beta.messages.create({
+      model: MODEL,
+      max_tokens: maxTokens,
+      betas: [FALLBACK_BETA],
+      fallbacks: 'default',
+      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      output_config: { effort: 'medium' },
+      messages: messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
+    });
+    if (res.stop_reason === 'refusal') throw new AiError('Model isteği reddetti');
+    return { text: res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''), sources: [] };
   }
 }
 
@@ -185,19 +221,11 @@ class GeminiProvider {
     }
   }
 
-  async complete({ system, content, schema, effort, fast = false }) {
+  // Modelleri sırayla dener; yanıt verisini döndürür. Her modeli 2 kez dene (503'te kısa bekleme);
+  // yoğun ya da kotası dolu modelden sonrakine geç.
+  async request(base, { fast = false } = {}) {
     const key = this.getApiKey();
     if (!key) throw new AiError('Gemini API anahtarı girilmemiş (Ayarlar › Yapay Zekâ Koç)');
-    const input = content.map((c) => (c.type === 'image'
-      ? { type: 'image', data: c.source.data, mime_type: c.source.media_type }
-      : { type: 'text', text: c.text }));
-    const base = {
-      system_instruction: system,
-      input,
-      response_format: { type: 'text', mime_type: 'application/json', schema },
-      ...(effort === 'low' ? { generation_config: { thinking_level: 'low' } } : {}),
-    };
-    // Her modeli 2 kez dene (503'te kısa bekleme); yoğun ya da kotası dolu modelden sonrakine geç.
     let res;
     // Savaş anında hız önemli: en hafif modelden başla.
     const models = fast ? [...this.models].reverse() : this.models;
@@ -216,10 +244,51 @@ class GeminiProvider {
       throw new AiError(`Gemini isteği reddetti: ${data?.error?.message || res.status} (anahtarı kontrol et)`);
     }
     if (!res.ok) throw new AiError(`Gemini hatası ${res.status}: ${data?.error?.message || ''}`.trim());
+    return data;
+  }
+
+  async complete({ system, content, schema, effort, fast = false }) {
+    const input = content.map((c) => (c.type === 'image'
+      ? { type: 'image', data: c.source.data, mime_type: c.source.media_type }
+      : { type: 'text', text: c.text }));
+    const data = await this.request({
+      system_instruction: system,
+      input,
+      response_format: { type: 'text', mime_type: 'application/json', schema },
+      ...(effort === 'low' ? { generation_config: { thinking_level: 'low' } } : {}),
+    }, { fast });
     const text = geminiText(data);
     if (!text) throw new AiError('Gemini boş yanıt döndü');
     return text;
   }
+
+  // Serbest metin cevap; search: gerekirse Google'da arar (güncel meta, harita, yama notları).
+  // messages: [{ role: 'user' | 'assistant', text }] — konuşma tek metne dökülür.
+  async completeText({ system, messages, search = false }) {
+    const turns = messages.map((m) => `${m.role === 'assistant' ? 'Koç' : 'Oyuncu'}: ${m.text}`);
+    const text = messages.length === 1 ? messages[0].text : `Önceki konuşma:\n${turns.slice(0, -1).join('\n\n')}\n\nYeni mesaj:\n${turns[turns.length - 1]}`;
+    const data = await this.request({
+      system_instruction: system,
+      input: [{ type: 'text', text }],
+      ...(search ? { tools: [{ type: 'google_search' }] } : {}),
+    });
+    const out = geminiText(data);
+    if (!out) throw new AiError('Gemini boş yanıt döndü');
+    return { text: out, sources: geminiSources(data) };
+  }
+}
+
+// Google Arama kaynakları: metin bloklarındaki url_citation açıklamaları (tekrarsız).
+function geminiSources(data) {
+  const seen = new Map();
+  for (const step of Array.isArray(data.steps) ? data.steps : []) {
+    for (const block of step.content || []) {
+      for (const a of block.annotations || []) {
+        if (a.type === 'url_citation' && a.url && !seen.has(a.url)) seen.set(a.url, { url: a.url, title: a.title || a.url });
+      }
+    }
+  }
+  return [...seen.values()].slice(0, 8);
 }
 
 // Yanıttaki metin: son adımın içeriğindeki metin parçaları (steps[].content[].text).
@@ -284,6 +353,7 @@ class AiCoach {
 - planAdimlari: maç içinde benim (ben alanındaki oyuncu) için 4-7 zamanlı hatırlatma; dakika (ondalıklı olabilir) ve en fazla 6 kelimelik mesaj.
 - kontraOnerisi: rakip ülke/oyun tarzlarına karşı hangi birimlere ağırlık vermeliyim.
 - takimKoordinasyonu: takım arkadaşlarımla nasıl rol paylaşmalıyız.
+Veride haritaVeMeta (AoE4World'ün son yamalardaki istatistikleri: haritanın ortalama maç süresi, bu haritada en çok kazanan ülkeler, ülkelerin kazanma oranları) ve internettenArastirma (güncel strateji özeti) varsa planı, kontrayı ve build'i haritaya ve güncel metaya göre kur; ör. kısa maçların haritasında erken savunma, uzun maçların haritasında ekonomi.
 - buildSecimi: buildSecenekleri verildiyse rakiplere ve haritaya en uygun build'in id'si (listeden aynen); verilmediyse "". Sadece ülkeye değil her rakibin oyun tarzına, bu ülkeyle tecrübesine, ortalama maç süresine ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına (bizeKarsiAgirlikliOrdu, gecmisKarsilasmalar) bak; ör. geçmişte atlıyla erken geldiyse mızrakçı/kule içeren açılışı seç.
 - buildGerekcesi: seçimin tek cümlelik nedeni, hangi rakip verisine dayandığını söyleyerek (ör. "KEYI bize karşı 2 maçta 6. dk atlı baskını yaptı: kule açılışı"); seçim yoksa "".${customText}
 
@@ -320,6 +390,7 @@ ${commandMode}
 - okunanKoylu: "sol alttaki kaynak paneli" görüntüsünde her kaynak satırının sağında yazan köylü sayıları ve boştaki köylü (yemek, odun, altin, tas, bosta). Tahmin etme, gördüğünü yaz; görüntü yoksa ya da okunamıyorsa hepsi 0.
 - dagilim: köylülerin şu an olması gereken dağılımı (yemek/odun/altın/taş köylü sayısı). Toplamı okunanKoylu toplamına (ekrandanOkunan.toplamKoylu varsa ona) eşit olsun. Köylü dağılım sayılarını simdiYap ya da komut metinlerine yazma; uygulama onları dagilim'dan kendisi hesaplar. Savaşta ya da emin değilsen hepsi 0.
 - uyari: oyuncunun ekranında köşede duracak tek not, en fazla 6 kelime. Gerçek bir risk ya da kritik eksik varsa yaz; yön biliniyorsa oyuncunun yapısına göre ekle (ör. "Rakip gelebilir · değirmen tarafından", "Baskın · altın madeninde", "Altın bitiyor"); yoksa "".
+- uyariTuru: uyarının türü. "gercek" SADECE saldırıyı/düşmanı şu an gerçekten görüyorsan (tam ekranda ya da mini haritada düşman askeri, ölen birim) ya da olaylar listesinde kayıp/üssünde düşman varsa. Rakip profili, süre ya da plana dayanan her şey "tahmin"tir; tahmini olmuş gibi yazma ("Baskın · altın madeninde" değil "Baskın gelebilir · altın madeni"). Takım arkadaşlarının risk notları onların koçunun tahminidir; kendi gözünle görmediysen "gercek" sayma. Oyuncunun kendi eksiği (ev, boşta köylü, kaynak bitiyor) "eksik"; uyarı yoksa "yok".
 - durum: tek kısa cümle.
 - simdiYap: en fazla 3 madde, her biri en fazla 6 kelime, somut ("Kışla kur", "Ahırdan 4 atlı bas").
 - uret: en fazla 2 madde, her biri en fazla 7 kelime: hangi binadan hangi birimden kaç tane ("Okçu atölyesinden 6 okçu", "2. kışla kur, mızrakçı bas"). Rakiplerin ülkesine ve görülen ordusuna karşı kontra seç. Gerekmiyorsa [].
@@ -335,11 +406,61 @@ Verilerin anlamı:
 - olaylar: yerel algılayıcıların son olayları (mini harita düşman görüşleri, nüfus/köylü kaybı, çağ atlamaları). Bunlar kesin bilgidir; önceliği bunlara ver.
 - haritadaGorulenler: son 90 saniyede mini haritada görülen düşmanlar (kısa süre görünüp kaybolanlar dahil).
 - ulkeyeOzel: oyuncunun ülkesine özel birim, teknoloji ve binalar (çağ numarasıyla); simgeYapilar: çağ atlamak için kurulabilecek simge yapılar (hangi çağa geçirdiği).
+- haritaVeMeta: harita, güncel meta (ülkelerin kazanma oranları) ve internetten araştırma özeti. Taktiği haritaya göre ayarla: dar geçit/kapalı haritada duvar ve kule, açık haritada baskın ve harita kontrolü, su varsa liman, kutsal yer ve ticaret fırsatları.
 
 Veri:
 ${JSON.stringify(context)}`,
     });
     return this.ask({ effort: 'low', schema: SCHEMAS.live, content, maxTokens: 5000, fast: combat });
+  }
+
+  // İnternetten maç öncesi araştırma (Google Arama destekli sağlayıcıda). Dönen: { text, sources } ya da null.
+  async research({ mapName, kind, myCiv, enemyCivs, allyCivs }) {
+    const provider = this.getProvider();
+    if (!provider?.completeText || provider.name !== 'Gemini') return null;
+    const prompt = `Age of Empires IV, güncel yama. ${kind || 'takım'} sıralı maç.
+Harita: ${mapName || 'bilinmiyor'} (Türkçe adıysa İngilizce karşılığını da düşün).
+Benim ülkem: ${myCiv || 'bilinmiyor'}. Takım arkadaşlarım: ${allyCivs.join(', ') || '-'}. Rakipler: ${enemyCivs.join(', ') || '-'}.
+İnternette ara ve Türkçe, en fazla 12 kısa maddeyle özetle:
+1) Haritanın özellikleri: açık/kapalı, su, kutsal yerler, ticaret, ormanlar, dar geçitler, kaynak dağılımı; bu haritada genelde hangi oyun tarzı kazanır.
+2) Benim ülkemle bu harita ve bu rakiplere karşı güncel güçlü açılış ve oyun planı.
+3) Rakip ülkelerin bilinen güçlü zamanlamaları ve bunlara kontra.
+4) Son yamada bu ülkeleri etkileyen önemli değişiklikler (biliyorsan).
+Sadece emin olduğun bilgileri yaz.`;
+    return provider.completeText({ system: SYSTEM, messages: [{ role: 'user', text: prompt }], search: true });
+  }
+
+  // Oyuncunun maçlarından hatalar, oyun tarzı, ulus önerisi ve takım kompozisyonu.
+  playerReview(context) {
+    return this.ask({
+      effort: 'high',
+      schema: SCHEMAS.review,
+      content: [{
+        type: 'text',
+        text: `Aşağıda benim (ben alanındaki oyuncu) maç verilerim var: uygulamanın kaydettiği maçların kayıt analizleri (çağ zamanları, kasaba merkezinin boş kaldığı süre, köylü sayısı, ilk asker, ordu, APM, otomatik tespitler), AoE4World'deki halka açık geçmişim (ülke bazında kazanma oranları, kısa/uzun maç başarısı) ve güncel meta. Takım arkadaşlarımın geçmişi de var.
+Profesyonel bir koç gibi analiz et:
+- ozet: 2-3 cümle.
+- oyunTarzi: nasıl oynamaya çalışıyorum (erken baskı mı, ekonomi mi, hangi birimler), verilerle.
+- gucluYonler: 2-4 madde.
+- tekrarlayanHatalar: 3-5 hata; her birinde hata, kanit (sayılarla, hangi maçlarda) ve cozum (somut, ölçülebilir).
+- ulusOnerileri: oyun tarzıma ve güncel metaya uyan 2-3 ülke; neden (verilerime dayanarak) ve nasilOyna (açılış ve plan, kısa).
+- takimKompozisyonu: takım arkadaşlarımla birlikte (geçmişleri verildiyse) hangi ülke dağılımı ve roller (biri baskıcı, biri ekonomi gibi).
+- calismaPlani: önümüzdeki maçlar için 3 pratik çalışma.
+Veri az ise bunu söyle ve buna göre temkinli ol; uydurma.
+
+Veri:
+${JSON.stringify(context)}`,
+      }],
+    });
+  }
+
+  // Sohbet. history: [{ role: 'user' | 'assistant', text }] (sonuncusu yeni soru). Dönen: { text, sources }
+  async chat(history, context) {
+    const provider = this.getProvider();
+    if (!provider) throw new AiError('Yapay zekâ sağlayıcısı seçilmemiş');
+    const first = { role: 'user', text: `Oyuncu verisi (cevaplarında kullan):\n${JSON.stringify(context)}` };
+    const ack = { role: 'assistant', text: 'Tamam, verilerini okudum.' };
+    return provider.completeText({ system: CHAT_SYSTEM, messages: [first, ack, ...history], search: true });
   }
 
   // Sağdaki oyuncu listesini okur: her oyuncunun satırı, rengi ve çağı. image: { data, mediaType }
@@ -418,4 +539,4 @@ ${JSON.stringify(build.steps.map((s) => ({ notlar: s.notes })))}`,
   }
 }
 
-module.exports = { AiCoach, AiError, ClaudeProvider, GeminiProvider, geminiText, SCHEMAS, MODEL, GEMINI_MODEL };
+module.exports = { AiCoach, AiError, ClaudeProvider, GeminiProvider, geminiText, geminiSources, SCHEMAS, MODEL, GEMINI_MODEL };

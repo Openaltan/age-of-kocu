@@ -108,7 +108,7 @@ function buildCandidates(builds) {
   }));
 }
 
-function prematchContext({ scouting, myCiv, build, candidates = null, specials = null, matches, loadAnalysis, mapName, localName }) {
+function prematchContext({ scouting, myCiv, build, candidates = null, specials = null, intel = null, matches, loadAnalysis, mapName, localName }) {
   const enemyIds = scouting.enemies.map((c) => c.profileId);
   const hist = opponentHistory(enemyIds, matches, loadAnalysis);
   return {
@@ -119,6 +119,9 @@ function prematchContext({ scouting, myCiv, build, candidates = null, specials =
     ...(candidates ? { buildSecenekleri: buildCandidates(candidates) } : {}),
     // Serbest: koç özel build yazar; ülkenin özel birim/teknoloji/simge yapıları doğru isimlerle.
     ...(specials ? { ulkeyeOzel: specials } : {}),
+    // Harita ve güncel meta (AoE4World istatistikleri) + internetten araştırma özeti.
+    ...(intel?.meta ? { haritaVeMeta: intel.meta } : {}),
+    ...(intel?.research ? { internettenArastirma: intel.research.text } : {}),
     benimBuild: buildOutline(build),
     takimim: scouting.allies.map((c) => compactCard(c)),
     rakipler: scouting.enemies.map((c) => compactCard(c, hist[c.profileId])),
@@ -144,10 +147,11 @@ function civSpecials(gamedata, civCode, age = 1) {
   return { birimler: pick(['unit']), teknolojiler: pick(['technology', 'upgrade']), binalar: pick(['building']), simgeYapilar: [...new Set(landmarks)] };
 }
 
-function liveContext({ elapsedSec, hud, buildView, myCiv, plan, lastAssessment, scouting, team = [], combat = false, trigger = null, events = [], mapSightings = [], ledger = null, specials = null, myColor = null, localName = null }) {
+function liveContext({ elapsedSec, hud, buildView, myCiv, plan, lastAssessment, scouting, team = [], combat = false, trigger = null, events = [], mapSightings = [], ledger = null, specials = null, myColor = null, localName = null, intel = null }) {
   const steps = buildView ? buildView.upcoming || [] : [];
   return {
     mod: combat ? 'savaş' : 'normal',
+    haritaVeMeta: intel,
     tetik: trigger,
     ben: localName,
     renkim: myColor,
@@ -218,4 +222,58 @@ function postgameContext({ analysis, match, matches, plan }) {
   };
 }
 
-module.exports = { opponentHistory, prematchContext, liveContext, postgameContext, myTrend, civSpecials, buildCandidates };
+// Gelişim analizi: benim maçlarım (kayıt analizleriyle), halka açık geçmişim, takım arkadaşlarım ve meta.
+// me/mates: scout kartları; civRows: AoE4World ülke istatistikleri; civName(code) -> Türkçe ad.
+function reviewContext({ matches, loadAnalysis, localProfileId, me, mates = [], civRows = [], civName = (c) => c }) {
+  const mine = (m) => m.players.find((p) => p.profileId === localProfileId) || null;
+  const result = (m) => (m.result === 'win' ? 'galibiyet' : m.result === 'loss' ? 'mağlubiyet' : null);
+  const detailed = matches.filter((m) => m.hasAnalysis).slice(0, 12).map((m) => {
+    const a = loadAnalysis(m.matchId);
+    const r = a?.report.players.find((p) => p.pid === a.localPid);
+    return {
+      harita: m.map || null,
+      sonuc: result(m),
+      ulke: mine(m) ? civName(mine(m).civCode) : null,
+      sure: m.durationSec ? mmss(m.durationSec) : null,
+      ...(r ? {
+        feodal: mmss(r.ageUps[2]),
+        kale: mmss(r.ageUps[3]),
+        merkezBostaIlk10: mmss(r.villagers.tcIdleFirst10),
+        ilkAsker: mmss(r.military.firstAt),
+        toplamAsker: r.military.total,
+        ordu: r.military.composition.slice(0, 5).map((c) => `${c.name} x${c.count}`),
+        ekoTeknoloji: r.ecoTechs.length,
+        apm: r.apm,
+      } : {}),
+      koylu10dk: m.analysisSummary?.villagersAt10 ?? null,
+      tespitler: (a?.findings || []).slice(0, 5).map((f) => f.text),
+    };
+  });
+  const all = matches.slice(0, 40).map((m) => ({
+    sonuc: result(m),
+    ulke: mine(m) ? civName(mine(m).civCode) : null,
+    harita: m.map || null,
+    dk: m.durationSec ? Math.round(m.durationSec / 60) : null,
+  }));
+  return {
+    ben: me ? compactCard(me) : null,
+    kayitAnalizliMaclarim: detailed,
+    uygulamadakiSonMaclarim: all,
+    takimArkadaslarim: mates.map((c) => compactCard(c)),
+    guncelMetaTakimOyunu: [...civRows].sort((a, b) => b.win_rate - a.win_rate).map((r) => `${civName(r.civilization)} %${Math.round(r.win_rate * 10) / 10} (seçilme %${Math.round(r.pick_rate * 10) / 10})`),
+  };
+}
+
+// YZ uyarısını overlay notuna çevirir: tahmin, olmuş bir saldırı gibi görünmesin.
+// Dönen: { level, text, share } ya da null. share: takım arkadaşlarına iletilsin mi (sadece gerçek olay).
+function warningNote(res) {
+  const text = String(res?.uyari || '').trim();
+  const kind = res?.uyariTuru || 'tahmin';
+  if (!text || kind === 'yok') return null;
+  if (kind === 'gercek') return { level: res.risk === 'düşük' ? 'info' : 'danger', text, share: true };
+  if (kind === 'eksik') return { level: 'info', text, share: false };
+  const hedged = /gelebilir|olası|muhtemel|bekle|hazır ol/i.test(text) ? text : `Olası: ${text}`;
+  return { level: 'info', text: hedged, share: false };
+}
+
+module.exports = { opponentHistory, prematchContext, liveContext, postgameContext, reviewContext, myTrend, civSpecials, buildCandidates, warningNote };

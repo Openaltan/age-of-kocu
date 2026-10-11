@@ -9,6 +9,7 @@ const DEFAULT_SETTINGS = {
   overlaySide: 'right',
   buildByCiv: {}, // { zhu_xis_legacy: 'buildId' | 'auto' } — auto: koç rakiplere göre seçer
   learnedCivCodes: {}, // { 'byzantine_ha_mac': 'macedonian_dynasty' }
+  learnedMapNames: {}, // oyunun Türkçe harita adı -> AoE4World adı { 'Saklı Ormanlar': 'Flankwoods' }
   screenReadingEnabled: true,
   hudRegions: null, // { width, height, fields: { food: {x,y,w,h}, ... } } fiziksel piksel
   aiProvider: 'gemini', // gemini (ücretsiz katman) | claude
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS = {
   aiLiveIntervalMin: 3,
   coachMode: 'normal', // normal: uyarı ve öneri · yonet: koç her an sıralı komut verir (oyuncu uygular)
   aiReport: true, // maç sonu YZ raporu
+  aiResearch: true, // maç öncesi internetten harita/meta araştırması (Gemini + Google Arama)
   aiTranslate: true, // build notlarını Türkçeleştir
   overlayMode: 'simple', // simple: sol üstte sadece notlar · detailed: build paneli, kartlar, YZ paneli
   teamSyncEnabled: true, // maçta takım arkadaşlarıyla otomatik bağlan

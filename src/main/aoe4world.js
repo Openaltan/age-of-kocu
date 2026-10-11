@@ -45,8 +45,32 @@ async function findGame(profileId, gameId) {
   return list.find((g) => g.game_id === gameId) || null;
 }
 
+// ---- Güncel meta (halka açık istatistik uç noktaları, son yamalar) ----
+const META_TTL_MS = 6 * 60 * 60 * 1000;
+
+// Maç türünü istatistik türüne çevirir: 1v1 sıralı "rm_solo", takım oyunları kendi adıyla.
+function statsKind(kind) {
+  if (!kind || kind === 'rm_1v1' || kind === 'qm_1v1') return 'rm_solo';
+  return kind.replace(/^qm_/, 'rm_');
+}
+
+// Ulusların kazanma/seçilme oranları: [{ civilization, win_rate, pick_rate, games_count, duration_median }]
+async function civStats(kind) {
+  return (await getJson(`${BASE}/stats/${statsKind(kind)}/civilizations`, META_TTL_MS)).data || [];
+}
+
+// Haritalar: [{ map_id, map, games_count, duration_median, highest_win_rate_civilization }]
+async function mapStats(kind) {
+  return (await getJson(`${BASE}/stats/${statsKind(kind)}/maps`, META_TTL_MS)).data || [];
+}
+
+// Tek haritada ulusların başarısı: [{ civilization, win_rate, games_count, duration_median }]
+async function mapCivStats(kind, mapId) {
+  return (await getJson(`${BASE}/stats/${statsKind(kind)}/maps/${mapId}`, META_TTL_MS)).data || [];
+}
+
 function clearCache() {
   cache.clear();
 }
 
-module.exports = { player, games, searchPlayers, findGame, clearCache };
+module.exports = { player, games, searchPlayers, findGame, clearCache, civStats, mapStats, mapCivStats, statsKind };
