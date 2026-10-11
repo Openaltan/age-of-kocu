@@ -1,0 +1,12 @@
+# Age of Koçu takım odası: aynı odadaki uygulamalar arasında mesaj aktarır, veri saklamaz.
+name = "age-of-kocu-team"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "TeamRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TeamRoom"]

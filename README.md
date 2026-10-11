@@ -1,0 +1,62 @@
+# Age of Koçu
+
+Age of Empires IV için Türkçe maç koçu.
+
+- **Maç öncesi:** Yükleme ekranında rakiplerin AoE4World'deki halka açık geçmişinden oyun tarzı çıkarılır: favori ülke, erken baskıcı mı, uzun maçta zayıf mı, form durumu.
+- **Maç içi:** Ülkene göre seçtiğin build order adım adım, sayılarla okunur ("11 köylü: 7 yemek, 2 odun, 2 altın"). Rakip analizine göre zamanlı uyarılar gelir.
+- **Ekran okuma:** Maç sırasında saniyede bir kendi ekranındaki kaynaklar, köylü dağılımı, nüfus ve boştaki köylüler okunur (OCR, internetsiz). "Oduna 3 köylü daha", "Ev kur: nüfus 19/20", "2 köylü boşta", "Köylü üretimi durdu" gibi anlık uyarılar gelir; build adımı gerçek köylü sayısına göre ilerler.
+- **Mini harita ve oyuncu listesi:** Kalibrasyonda işaretlenirse saniyede bir renkleri okunur (internetsiz). Mini haritada üssüne giren, sana ya da baskın birliğine yaklaşan, kısa süre görünüp kaybolan düşmanlar ve takım arkadaşının üssüne giren düşman anında not olur ("Üssüne saldırı · batı tarafı", "Ordu sana geliyor · güneydoğudan"). Oyuncu listesinden renkler, rakipler (⚔) ve çağ atlamaları anlaşılır. Yalnızca oyunun sana zaten gösterdiği bilgi kullanılır.
+- **Sade overlay:** Oyunda sol üstte sadece eksikler ve riskler kısa notlar halinde görünür ("Ev kur (19/20)", "2 köylü boşta", "Rakip gelebilir · sol"). Not, durum sürdükçe kalır; tehlike kırmızıdır. Ayarlar'dan detaylı moda geçilebilir.
+- **Takım senkronu:** Kurulum gerekmez: maç başlayınca aynı takımdaki Age of Koçu kullanıcıları ücretsiz bir Cloudflare Worker odası (`server/team-room`) üzerinden kendiliğinden bağlanır. Herkes takımın köylü/nüfus/kaynak durumunu ve uyarılarını görür; Ctrl+Alt+Y yardım çağrısı yollar. İsteğe bağlı gizli takım kodu, odayı rakibe karşı tamamen kapatır.
+- **Yapay zekâ koç (Claude):** Maç öncesi rakip profilleri, rakip defteri (geçmiş karşılaşmalar) ve senin gelişim verinden oyun planı + rakip tahminleri + dakikalı plan çıkarır; maç içinde ekranına ve mini haritaya bakıp "şimdi yap", "üret" (hangi binadan kaç birim) ve "geliştir" emirleri, rakip tahmini ve risk verir. Sakin anlarda birkaç dakikada bir bakar; önemli anda (kayıp, üssünde düşman, ordu yaklaşıyor, çağ atlama) beklemeden bakar, savaşta 30 saniyede bir bakar ve sadece çatışmayı yönetir. Kendi üssünde gördüklerini maç boyunca hatırlar (üs defteri), takım arkadaşının üssüne bakarken onu senin üssün sanmaz; maç sonunda ölçülebilir hedefli profesyonel rapor yazar ve maç öncesi tahminlerinin tuttuğunu kontrol eder. Build notlarını Türkçeleştirir. Sağlayıcı seçilebilir: **Google Gemini** (varsayılan, ücretsiz katman; anahtar aistudio.google.com/apikey) ya da **Claude** (kredi ile). Anahtar Ayarlar › Yapay Zekâ Koç bölümüne girilir ve bilgisayarda Windows şifrelemesiyle saklanır.
+- **Maç sonrası:** Maç bitince oyunun kayıt dosyası (`temp.rec`) ayrıştırılır: çağ atlama zamanları, kasaba merkezinin boşta kaldığı süre, dakika dakika köylü/asker üretimi, ordu kompozisyonu ve rakiplerle kıyas. Koç bunlardan Türkçe tespitler çıkarır; Profilim sekmesi maçlar arası gelişimi gösterir.
+
+**Adil oyun:** Oyun belleği okunmaz, maç sırasında rakip hakkında gizli bilgi kullanılmaz. Ekran okuma sadece senin ekranını (HUD, mini harita, oyuncu listesi) okur. Kayıt dosyası rakip komutlarını da içerdiği için **yalnızca maç bittikten sonra** okunur. Rakip analizi halka açık AoE4World verisiyle yapılır.
+
+## Kurulum (oyuncular)
+
+1. `Age of Koçu Setup x.y.z.exe` dosyasını çalıştır. Windows "bilinmeyen yayıncı" uyarısı verirse *Ek bilgi › Yine de çalıştır*.
+2. AoE4 › Ayarlar › Grafik › **Ekran Modu: Tam Ekran Pencereli** (yoksa overlay oyunun üstünde görünmez).
+3. Age of Koçu'yu açık bırakıp ranked maça gir. Profilin otomatik bulunur.
+4. Ekran okuma için bir kerelik kalibrasyon: herhangi bir maçta **Ctrl+Alt+K**'ya bas, panelde *Ekran Okuma* sekmesinde her sayının etrafına kutu çiz; isteğe bağlı olarak mini haritanın ve sağdaki oyuncu listesinin (oyunda açık olmalı) etrafına da. *Test et* › *Kaydet*.
+
+### Oyun içi kısayollar
+
+| Kısayol | İşlev |
+|---|---|
+| Ctrl+Alt+→ / ← | Build adımı ileri / geri |
+| Ctrl+Alt+↑ / ↓ | Koç saatini ±10 sn (oyun duraklatıldıysa) |
+| Ctrl+Alt+R | Rakip kartlarını göster / gizle |
+| Ctrl+Alt+O | Overlay'i aç / kapat |
+| Ctrl+Alt+K | Ekran okuma kalibrasyonu için ekran görüntüsü |
+| Ctrl+Alt+Y | Takıma yardım çağrısı |
+| Ctrl+Alt+A | Koça sor: YZ ekranına bakıp hemen değerlendirir |
+
+## Geliştirme
+
+```bash
+npm install
+npm start        # uygulamayı çalıştır
+npm test         # birim testleri
+npm run dist     # dist/ altına Windows kurulum dosyası
+node scripts/build-gamedata.js   # yeni yama/ülke gelince oyun verisi tablosunu yenile
+```
+
+| Dosya | Görev |
+|---|---|
+| `src/main/logWatcher.js` | `warnings.log` takibi: maç ID, oyuncular, başlangıç/bitiş, sonuçlar |
+| `src/main/scout.js` | AoE4World maç geçmişinden oyuncu profili ve Türkçe notlar |
+| `src/main/aoe4guides.js` | Topluluk build order'ları (diskte önbelleklenir) |
+| `src/main/coach.js` | Build adımlarını zamanlama (saat ya da okunan köylü sayısı), zamanlı uyarılar |
+| `src/main/screenReader.js`, `ocr.js`, `imageops.js` | Ekran yakalama, ön işleme, tesseract.js ile rakam okuma |
+| `src/main/hud.js` | Okunan HUD değerlerini yumuşatma ve anlık koç kuralları |
+| `src/main/minimap.js` | Mini harita ve oyuncu listesi renk analizi: düşman görüşleri, ordu yaklaşması, rakip satırları |
+| `src/main/liveEvents.js` | Önemli an algılayıcı (kayıp, mini harita olayları, çağ değişimi) ve savaş modu |
+| `src/main/baseLedger.js` | Üs defteri: maç boyunca kendi üssünde görülenler + build'e göre yapılmış olması gerekenler |
+| `src/main/replay.js` | AoE4 `.rec` ayrıştırıcısı (biçim dosyanın başındaki yorumda) |
+| `src/main/analysis.js` | Kayıttan oyuncu raporu ve Türkçe koç tespitleri |
+| `src/main/aiCoach.js`, `aiContext.js` | Claude ile maç öncesi plan, canlı (görsel) değerlendirme, maç sonu rapor, build çevirisi; YZ'ye giden bağlam |
+| `src/main/postgame.js` | Maç sonu kaydı bekleme, doğrulama, kopyalama, analiz |
+| `src/main/data/gamedata.json` | pbgid → birim/bina/teknoloji tablosu (data.aoe4world.com'dan üretilir) |
+| `src/main/main.js` | Pencereler, kısayollar, olay akışı |
+| `src/renderer/` | Panel (`dashboard/`) ve oyun üstü katman (`overlay/`) |

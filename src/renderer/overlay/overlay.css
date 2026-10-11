@@ -1,0 +1,91 @@
+/* Şeffaf, tıklamaları oyuna geçiren katman. Sadece kenardaki sütun görünür. */
+html, body { background: transparent; overflow: hidden; height: 100%; user-select: none; }
+
+.column {
+  position: fixed;
+  top: 110px;
+  width: 380px;
+  max-height: calc(100vh - 360px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.column.right { right: 16px; }
+.column.left { left: 16px; }
+
+.panel {
+  background: rgba(11, 16, 22, 0.88);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* ---- Koç paneli ---- */
+#coach .top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
+#coach .top .clock { color: var(--gold); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#coach .build-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
+#coach .say { font-size: 17px; font-weight: 650; margin: 8px 0 6px; line-height: 1.3; }
+#coach .notes { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+#coach .next { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+#coach .next b { color: var(--text); font-weight: 600; }
+#coach .bar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+#coach .bar i { display: block; height: 100%; background: var(--gold); transition: width .5s linear; }
+#coach .manual { color: var(--gold); }
+#coach .keys { margin-top: 6px; font-size: 11px; color: var(--muted); opacity: .75; }
+#coach .empty { color: var(--muted); font-size: 13px; }
+
+/* ---- Uyarılar ---- */
+#alerts { display: flex; flex-direction: column; gap: 6px; }
+.alert { font-size: 14.5px; font-weight: 600; line-height: 1.35; border-left: 4px solid var(--info); animation: in .25s ease-out; }
+.alert.lvl-danger { border-left-color: var(--danger); }
+.alert.lvl-chance { border-left-color: var(--chance); }
+.alert.out { opacity: 0; transition: opacity .6s; }
+@keyframes in { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---- Rakip kartları ---- */
+#cards { display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+#cards h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--gold); }
+#cards .card { background: rgba(18, 26, 35, 0.92); padding: 8px 10px; }
+#cards .insights li { font-size: 12.5px; }
+#cards .allies { font-size: 12.5px; color: var(--muted); }
+#cards .allies b { color: var(--ally); font-weight: 600; }
+
+/* ---- Ekrandan okunan değerler ---- */
+.hud-row { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); padding: 6px 10px; font-variant-numeric: tabular-nums; }
+.hud-row .idle { color: var(--danger); font-weight: 700; }
+
+/* ---- YZ koç ---- */
+.ai { border-left: 4px solid var(--info); }
+.ai.lvl-danger { border-left-color: var(--danger); }
+.ai.lvl-chance { border-left-color: var(--chance); }
+.ai-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.ai-head b { color: var(--gold); text-transform: uppercase; letter-spacing: .06em; }
+.ai-main { margin: 6px 0; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.ai ol, .ai ul { margin: 4px 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.45; }
+.ai-sub { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.ai-sub b { color: var(--text); font-weight: 600; }
+.ai-sub.err { color: var(--danger); }
+
+/* ---- Sade mod: sol üstte notlar ---- */
+.notes { position: fixed; top: 70px; left: 16px; display: flex; flex-direction: column; gap: 5px; max-width: 340px; }
+.notes[hidden], .column[hidden] { display: none; }
+.note-pill {
+  background: rgba(11, 16, 22, 0.86);
+  border: 1px solid rgba(214, 176, 106, 0.35);
+  border-left: 4px solid var(--gold);
+  border-radius: 6px;
+  padding: 6px 11px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  animation: in .2s ease-out;
+}
+.note-pill.lvl-danger { border-left-color: var(--danger); color: #ffd9d2; background: rgba(74, 20, 18, 0.9); }
+.note-pill.lvl-chance { border-left-color: var(--chance); }
+
+/* ---- Kısayol onayı ---- */
+.flash { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); padding: 8px 18px; border-radius: 6px; font-size: 16px; font-weight: 700; background: rgba(12, 18, 26, 0.92); border: 1px solid var(--gold); color: var(--text); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5); }
+.flash.lvl-danger { border-color: var(--danger); }
+.flash[hidden] { display: none; }

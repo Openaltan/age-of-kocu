@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://aoe4guides.com data:; style-src 'self'; script-src 'self'">
+  <title>Age of Koçu</title>
+  <link rel="stylesheet" href="../shared/base.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <aside class="side">
+    <div class="brand">Age of <span>Koçu</span></div>
+    <nav id="nav">
+      <button data-view="live" class="active">Canlı Maç</button>
+      <button data-view="analysis">Maç Analizi</button>
+      <button data-view="builds">Build Order</button>
+      <button data-view="team">Profilim</button>
+      <button data-view="settings">Ayarlar</button>
+    </nav>
+    <div id="status" class="status"></div>
+  </aside>
+  <main id="main">
+    <section id="view-live" class="view"></section>
+    <section id="view-analysis" class="view" hidden></section>
+    <section id="view-builds" class="view" hidden></section>
+    <section id="view-team" class="view" hidden></section>
+    <section id="view-search" class="view" hidden></section>
+    <section id="view-history" class="view" hidden></section>
+    <section id="view-screen" class="view" hidden></section>
+    <section id="view-settings" class="view" hidden></section>
+  </main>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

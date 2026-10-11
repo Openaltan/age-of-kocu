@@ -1,0 +1,18 @@
+(I) [14:18:01.053] [000011844]: GAME -- [Age of Empires IV] set to language [tr]
+(I) [14:19:07.328] [000035532]: WebSocketConnection::ProcessMessages: message=[0,"PresenceMessage",21327806,[[614,21327806,"/xboxlive/X","{}","altanarl","altanarl","",1,2,25,3,null,"4",9,[],1,"Çevrimiçi",[[1409823,""]]]]]
+(I) [14:24:42.072] [000011844]: AutomatchInternal - OnJoinAutomatch - Server told us join matchID=255410945, hostProfileID=12532047
+(I) [14:25:22.009] [000011844]: GAME -- Scenario:
+(I) [14:25:22.009] [000011844]: GAME -- Win Condition Name: standard_mode
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 0 Rosenthal3352 12532047 0 sultanate
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 1 DWJ.九族 25717256 0 mongol_ha_gol
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 2 A_yesMan 23498090 0 english
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 3 Pirofurkan 24071999 1 english
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 4 jxstixab 24072073 1 mongol_ha_gol
+(I) [14:25:22.009] [000011844]: GAME -- Human Player: 5 altanarl 21327806 1 chinese_ha_01
+(I) [14:25:22.010] [000011844]: GAME -- Some other line
+(I) [14:26:55.966] [000012152]: GAME -- Recording game
+(I) [14:27:07.521] [000011844]: GAME -- Starting mission:
+(I) [14:58:02.504] [000011844]: UI Async loading data:ui\lobby\modalpages\PostGameMatchDetailsModalPage.xaml
+(I) [14:59:35.079] [000011844]: MOD -- Game Over at frame 15577
+(I) [14:59:35.100] [000011844]: Report sent for profileID[12532047] -> race=[2101234], result=[1], XP Gain=[400]
+(I) [14:59:35.100] [000011844]: Report sent for profileID[21327806] -> race=[2121950], result=[0], XP Gain=[200]
