@@ -177,6 +177,26 @@ class Coach {
   }
 }
 
+// Otomatik build (YZ yokken ya da YZ seçene kadar): rakipler erken baskıcıysa savunmalı,
+// uzun maçta zayıfsa ekonomik açılış; ikisi de değilse en yüksek puanlı build.
+const SAFE_BUILD = /savun|defen|safe|tower|kule|wall|duvar|anti/i;
+const ECO_BUILD = /fast castle|fast imp|boom|eco|ekonomi|\bfc\b/i;
+
+function pickBuild(builds, scouting) {
+  if (!builds?.length) return { build: null, reason: null };
+  const text = (b) => `${b.name} ${b.strategy || ''}`;
+  const enemies = scouting?.enemies || [];
+  if (enemies.some((c) => c.insights.some((i) => i.level === 'danger' && /Erken|erken bitirmeyi/.test(i.text)))) {
+    const b = builds.find((x) => SAFE_BUILD.test(text(x)));
+    if (b) return { build: b, reason: 'Rakipte erken baskıcı var: savunmalı açılış' };
+  }
+  if (enemies.length && enemies.every((c) => c.insights.some((i) => /Uzayan maçlarda zayıflıyor|uzayınca düşüyor/.test(i.text)))) {
+    const b = builds.find((x) => ECO_BUILD.test(text(x)));
+    if (b) return { build: b, reason: 'Rakipler uzun maçta zayıf: ekonomik açılış' };
+  }
+  return { build: builds[0], reason: 'En yüksek puanlı build' };
+}
+
 // Yükleme ekranında rakipler için tek satırlık etiketler: "KEYI: ülke uzmanı, formda".
 function enemyLabels(scouting) {
   if (!scouting) return [];
@@ -195,4 +215,4 @@ function enemyLabels(scouting) {
   }).filter(Boolean);
 }
 
-module.exports = { Coach, BuildRunner, stepTriggers, buildAlerts, enemyLabels, VILLAGER_TRAIN_SEC };
+module.exports = { Coach, BuildRunner, stepTriggers, buildAlerts, enemyLabels, pickBuild, VILLAGER_TRAIN_SEC };

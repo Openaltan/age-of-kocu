@@ -32,6 +32,7 @@ const MAX_INK = 0.6;
 // Maç sırasında saniyede bir ekranı okur. regions: { fieldKey: {x,y,w,h} } (fiziksel piksel).
 class ScreenReader {
   constructor(cacheDir) {
+    this.cacheDir = cacheDir;
     this.reader = new NumberReader(cacheDir);
     this.ready = null;
     this.timer = null;
@@ -63,8 +64,18 @@ class ScreenReader {
   start(regions, { onFrame, onReading }, intervalMs = 1000) {
     this.stop();
     const loop = async () => {
-      if (this.busy) return; // önceki tur bitmediyse bu turu atla
+      if (this.busy) {
+        // Önceki tur bitmediyse bu turu atla. 20 sn'den uzun takıldıysa OCR'ı yeniden kur;
+        // yoksa ekran okuma maçın geri kalanında bir daha çalışmaz.
+        if (Date.now() - this.busySince < 20000) return;
+        console.warn('ekran okuma takıldı; OCR yeniden kuruluyor');
+        const old = this.reader;
+        this.reader = new NumberReader(this.cacheDir);
+        this.ready = null;
+        old.close().catch(() => {});
+      }
       this.busy = true;
+      const turn = (this.busySince = Date.now());
       try {
         const img = await captureScreen();
         this.lastFrame = { image: img, at: Date.now() };
@@ -74,7 +85,7 @@ class ScreenReader {
       } catch (err) {
         console.warn('ekran okuma:', err.message);
       } finally {
-        this.busy = false;
+        if (this.busySince === turn) this.busy = false; // takılıp bırakılan eski tur dokunmasın
       }
     };
     this.timer = setInterval(loop, intervalMs);

@@ -5,6 +5,8 @@ Age of Empires IV için Türkçe maç koçu.
 - **Maç öncesi:** Yükleme ekranında rakiplerin AoE4World'deki halka açık geçmişinden oyun tarzı çıkarılır: favori ülke, erken baskıcı mı, uzun maçta zayıf mı, form durumu.
 - **Maç içi:** Ülkene göre seçtiğin build order adım adım, sayılarla okunur ("11 köylü: 7 yemek, 2 odun, 2 altın"). Rakip analizine göre zamanlı uyarılar gelir.
 - **Ekran okuma:** Maç sırasında saniyede bir kendi ekranındaki kaynaklar, köylü dağılımı, nüfus ve boştaki köylüler okunur (OCR, internetsiz). "Oduna 3 köylü daha", "Ev kur: nüfus 19/20", "2 köylü boşta", "Köylü üretimi durdu" gibi anlık uyarılar gelir; build adımı gerçek köylü sayısına göre ilerler.
+- **Yönet modu (Ctrl+Alt+M ya da panelin sağ üstü):** Koç seni yönetir: 45 saniyede bir sıralı komut verir (ne inşa edilecek, hangi binadan kaç birim, hangi araştırma, hangi simge yapıyla ne zaman çağ atlanacak, nereye kaç birimle baskın). Köylü dağılımı her zaman gerçek köylü sayına oturtulur, toplam tutar. Normal mod (uyarı ve öneri) varsayılandır.
+- **Otomatik build:** Build Order sayfasında "Otomatik (rakibe göre)" seçilirse koç yükleme ekranında rakiplerin ülkesine, oyun tarzına ve geçmişine bakıp build'i kendisi seçer (YZ yoksa erken baskıcıya karşı savunmalı açılış).
 - **Mini harita ve oyuncu listesi:** Kalibrasyonda işaretlenirse saniyede bir renkleri okunur (internetsiz). Mini haritada üssüne giren, sana ya da baskın birliğine yaklaşan, kısa süre görünüp kaybolan düşmanlar ve takım arkadaşının üssüne giren düşman anında not olur ("Üssüne saldırı · batı tarafı", "Ordu sana geliyor · güneydoğudan"). Oyuncu listesinden renkler, rakipler (⚔) ve çağ atlamaları anlaşılır. Yalnızca oyunun sana zaten gösterdiği bilgi kullanılır.
 - **Sade overlay:** Oyunda sol üstte sadece eksikler ve riskler kısa notlar halinde görünür ("Ev kur (19/20)", "2 köylü boşta", "Rakip gelebilir · sol"). Not, durum sürdükçe kalır; tehlike kırmızıdır. Ayarlar'dan detaylı moda geçilebilir.
 - **Takım senkronu:** Kurulum gerekmez: maç başlayınca aynı takımdaki Age of Koçu kullanıcıları ücretsiz bir Cloudflare Worker odası (`server/team-room`) üzerinden kendiliğinden bağlanır. Herkes takımın köylü/nüfus/kaynak durumunu ve uyarılarını görür; Ctrl+Alt+Y yardım çağrısı yollar. İsteğe bağlı gizli takım kodu, odayı rakibe karşı tamamen kapatır.
@@ -31,6 +33,7 @@ Age of Empires IV için Türkçe maç koçu.
 | Ctrl+Alt+K | Ekran okuma kalibrasyonu için ekran görüntüsü |
 | Ctrl+Alt+Y | Takıma yardım çağrısı |
 | Ctrl+Alt+A | Koça sor: YZ ekranına bakıp hemen değerlendirir |
+| Ctrl+Alt+M | Koç modu: Normal ↔ Yönet |
 
 ## Geliştirme
 

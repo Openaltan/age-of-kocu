@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS = {
   profileId: null, // log'dan otomatik bulunur; elle de girilebilir
   overlayEnabled: true,
   overlaySide: 'right',
-  buildByCiv: {}, // { zhu_xis_legacy: 'buildId' }
+  buildByCiv: {}, // { zhu_xis_legacy: 'buildId' | 'auto' } — auto: koç rakiplere göre seçer
   learnedCivCodes: {}, // { 'byzantine_ha_mac': 'macedonian_dynasty' }
   screenReadingEnabled: true,
   hudRegions: null, // { width, height, fields: { food: {x,y,w,h}, ... } } fiziksel piksel
@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   aiLive: true, // maç içi periyodik YZ değerlendirmesi
   aiVision: true, // değerlendirmede ekran görüntüsü gönder
   aiLiveIntervalMin: 3,
+  coachMode: 'normal', // normal: uyarı ve öneri · yonet: koç her an sıralı komut verir (oyuncu uygular)
   aiReport: true, // maç sonu YZ raporu
   aiTranslate: true, // build notlarını Türkçeleştir
   overlayMode: 'simple', // simple: sol üstte sadece notlar · detailed: build paneli, kartlar, YZ paneli

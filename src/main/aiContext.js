@@ -4,7 +4,7 @@
 // oyuncunun kendi ekranı/HUD'u ve biten maçların kayıtları kullanılır.
 
 const { mmss } = require('./analysis');
-const { noteText } = require('./baseLedger');
+const { noteText, AGE_NAMES } = require('./baseLedger');
 
 // Rakip defteri: bu oyuncularla daha önce oynanan maçlar ve (analiz varsa) o maçtaki oyunları.
 // matches: store.matches, loadAnalysis(matchId) -> analiz ya da null
@@ -81,13 +81,25 @@ function buildOutline(build) {
   };
 }
 
-function prematchContext({ scouting, myCiv, build, matches, loadAnalysis, mapName, localName }) {
+// Otomatik build seçimi için aday build'lerin kısa özeti: ilk adımların notları açılışı anlatır.
+function buildCandidates(builds) {
+  return builds.map((b) => ({
+    id: b.id,
+    ad: b.name,
+    strateji: b.strategy || null,
+    acilis: b.steps.slice(0, 6).flatMap((s) => s.notes.map(noteText)).join(' / ').slice(0, 400),
+  }));
+}
+
+function prematchContext({ scouting, myCiv, build, candidates = null, matches, loadAnalysis, mapName, localName }) {
   const enemyIds = scouting.enemies.map((c) => c.profileId);
   const hist = opponentHistory(enemyIds, matches, loadAnalysis);
   return {
     harita: mapName || 'bilinmiyor',
     mod: scouting.kind,
     benimUlkem: myCiv?.tr || null,
+    // Otomatik build: koç bu listeden rakiplere göre seçer; benimBuild şimdilik en yüksek puanlı.
+    ...(candidates ? { buildSecenekleri: buildCandidates(candidates) } : {}),
     benimBuild: buildOutline(build),
     takimim: scouting.allies.map((c) => compactCard(c)),
     rakipler: scouting.enemies.map((c) => compactCard(c, hist[c.profileId])),
@@ -106,8 +118,11 @@ function civSpecials(gamedata, civCode, age = 1) {
     const prev = seen.get(e.baseId);
     if (!prev || e.age < prev.age) seen.set(e.baseId, e);
   }
-  const pick = (kinds) => [...seen.values()].filter((e) => kinds.includes(e.kind)).sort((a, b) => a.age - b.age).map((e) => `${e.name} (${e.age})`);
-  return { birimler: pick(['unit']), teknolojiler: pick(['technology', 'upgrade']), binalar: pick(['building']) };
+  const pick = (kinds) => [...seen.values()].filter((e) => kinds.includes(e.kind) && !e.tags.includes('landmark')).sort((a, b) => a.age - b.age).map((e) => `${e.name} (${e.age})`);
+  // Simge yapılar çağdan bağımsız hepsi: N. çağda kurulan simge N+1. çağa geçirir.
+  const landmarks = Object.values(gamedata).filter((e) => e.civs.includes(civCode) && e.tags.includes('landmark') && e.age < 4)
+    .sort((a, b) => a.age - b.age).map((e) => `${e.name} → ${AGE_NAMES[e.age + 1]}`);
+  return { birimler: pick(['unit']), teknolojiler: pick(['technology', 'upgrade']), binalar: pick(['building']), simgeYapilar: [...new Set(landmarks)] };
 }
 
 function liveContext({ elapsedSec, hud, buildView, myCiv, plan, lastAssessment, scouting, team = [], combat = false, trigger = null, events = [], mapSightings = [], ledger = null, specials = null, myColor = null, localName = null }) {
@@ -178,4 +193,4 @@ function postgameContext({ analysis, match, matches, plan }) {
   };
 }
 
-module.exports = { opponentHistory, prematchContext, liveContext, postgameContext, myTrend, civSpecials };
+module.exports = { opponentHistory, prematchContext, liveContext, postgameContext, myTrend, civSpecials, buildCandidates };

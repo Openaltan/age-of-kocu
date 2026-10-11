@@ -5,7 +5,7 @@ const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, dialog, nati
 const { LogWatcher, defaultLogPath } = require('./logWatcher');
 const { Store } = require('./store');
 const { BuildLibrary } = require('./aoe4guides');
-const { Coach, buildAlerts, enemyLabels } = require('./coach');
+const { Coach, buildAlerts, enemyLabels, pickBuild } = require('./coach');
 const { NoteBoard } = require('./notes');
 const { TeamSync, teamNotes } = require('./teamSync');
 const aoe4world = require('./aoe4world');
@@ -14,7 +14,7 @@ const civs = require('./civs');
 const { PostGame } = require('./postgame');
 const gamedata = require('./data/gamedata.json');
 const { ScreenReader, captureScreen, areaBitmap } = require('./screenReader');
-const { HudState, HudCoach, FIELDS, AREAS } = require('./hud');
+const { HudState, HudCoach, FIELDS, AREAS, fitDistribution, distributionLine } = require('./hud');
 const fs = require('fs');
 const { AiCoach, ClaudeProvider, GeminiProvider } = require('./aiCoach');
 const aiContext = require('./aiContext');
@@ -31,6 +31,9 @@ const LIVE_URGENT_COOLDOWN_MS = 20 * 1000; // tehlike olayından sonra en erken 
 const LIVE_EVENT_COOLDOWN_MS = 45 * 1000; // bilgi olayları (ordu görüldü, çağ atlandı)
 const LIVE_COMBAT_INTERVAL_MS = 30 * 1000; // savaş modunda periyot
 const LIVE_MAX_AUTO_CALLS = 80;
+const LIVE_COMMAND_INTERVAL_MS = 45 * 1000; // yönet modunda sakin anlarda da 45 sn'de bir komut
+const LIVE_MAX_COMMAND_CALLS = 150;
+const LIVE_STUCK_MS = 150 * 1000; // bundan uzun süren çağrı takılmış sayılır
 const IDENTIFY_RETRY_MS = 60 * 1000;
 const IDENTIFY_COOLDOWN_MS = 15 * 1000;
 
@@ -66,6 +69,9 @@ let playersSource = null; // 'ai' | 'local'
 let identifyBusy = false;
 let identifyAt = 0;
 let identifyWanted = false;
+let autoCandidates = null; // "Otomatik" build seçiliyken ülkenin build listesi
+let aiTarget = null; // { target: {food,wood,gold,stone}, at } YZ'nin son hedef köylü dağılımı
+let liveSeq = 0; // takılan YZ çağrısının geç gelen sonucunu yok saymak için
 const notes = new NoteBoard();
 let hudNotes = [];
 let lastNotesJson = '';
@@ -100,6 +106,7 @@ const state = {
   screenReading: false, // maç sırasında ekran okuma aktif mi
   version: app.getVersion(),
   update: null, // { status: 'downloading' | 'ready', version, percent }
+  buildAuto: null, // otomatik build: { status: 'waiting' | 'done', name, reason, source }
   ai: { available: false, plan: null, planStatus: null, planError: null, live: [], liveStatus: null, liveError: null, combat: false, players: null },
 };
 
@@ -124,22 +131,52 @@ async function loadBuildFor(match) {
   const civ = me ? civs.fromLogCode(me.civCode) : null;
   state.myCiv = civ ? { slug: civ.slug, tr: civ.tr, guide: civ.guide } : null;
   state.build = null;
+  state.buildAuto = null;
+  autoCandidates = null;
   if (!civ) return null;
   try {
-    state.build = await library.get(civ.guide, store.settings.buildByCiv[civ.slug]);
+    const choice = store.settings.buildByCiv[civ.slug];
+    if (choice === 'auto') {
+      // Otomatik: rakipler belli olunca koç (ya da kural) seçer; o zamana kadar en yüksek puanlı.
+      autoCandidates = await library.list(civ.guide);
+      state.buildAuto = { status: 'waiting' };
+      useBuild(autoCandidates[0] || null);
+    } else {
+      useBuild(await library.get(civ.guide, choice));
+    }
   } catch (err) {
     console.warn('build alınamadı:', err.message);
   }
-  // Türkçe notlar arka planda gelir; gelince koçun build'i adım konumu korunarak güncellenir.
-  const original = state.build;
-  translateBuild(original).then((tr) => {
-    if (tr !== original && state.build === original) {
+  return state.build;
+}
+
+// Build'i koça verir; Türkçe notlar arka planda gelir, gelince adım konumu korunarak güncellenir.
+function useBuild(build) {
+  state.build = build;
+  if (state.phase === 'playing') coach.setBuild(build);
+  translateBuild(build).then((tr) => {
+    if (tr !== build && state.build === build) {
       state.build = tr;
       coach.replaceBuild(tr);
       pushState();
     }
   }).catch((err) => console.warn('çeviri:', err.message));
-  return state.build;
+}
+
+// Otomatik build kararı (YZ ya da kural). Sadece "Otomatik" seçiliyken ve bir kez uygulanır.
+function applyAutoBuild(build, reason, source) {
+  if (!autoCandidates || !build || state.buildAuto?.status === 'done') return;
+  if (build.id !== state.build?.id) useBuild(build);
+  state.buildAuto = { status: 'done', name: build.name, reason: reason || null, source };
+  notes.push('auto-build', 'info', `Build: ${build.name}`, 40);
+  pushNotes();
+  pushState();
+}
+
+function autoBuildByRule() {
+  if (!autoCandidates) return;
+  const p = pickBuild(autoCandidates, state.scouting);
+  applyAutoBuild(p.build, p.reason, 'kural');
 }
 
 async function onMatchLoading(match, { simulated = false } = {}) {
@@ -157,7 +194,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
   pushState();
   pushNotes();
 
-  loadBuildFor(match).then(pushState);
+  const buildReady = loadBuildFor(match).then(pushState);
   try {
     const result = await scout.scoutMatch(match, state.localProfileId);
     if (state.match !== match) return; // bu arada yeni maç başladıysa eski sonucu at
@@ -166,9 +203,14 @@ async function onMatchLoading(match, { simulated = false } = {}) {
     pushNotes();
     // Analiz maç başladıktan sonra bittiyse uyarıları sonradan yükle.
     if (state.phase === 'playing') coach.alerts = buildAlerts(result);
+    // Otomatik build seçimi için aday listesi hazır olsun.
+    await buildReady.catch(() => {});
+    if (state.match !== match) return;
+    if (!aiOn('aiPrematch')) autoBuildByRule();
     runPrematch(match);
   } catch (err) {
     state.scoutingError = err.message;
+    autoBuildByRule();
   }
   pushState();
 }
@@ -185,6 +227,10 @@ async function onMatchStarted(match, { simulated = false } = {}) {
   startScreenReading();
   startAiLive();
   connectTeam(state.match);
+  // Kalibrasyon yoksa ekran okuma, mini harita ve kayıp algılama çalışmaz: oyuncu bilsin.
+  if (!store.settings.hudRegions?.fields) notes.push('calib', 'info', 'Ekran okuma kapalı: Ctrl+Alt+K ile kalibre et', 60);
+  else if (!store.settings.screenReadingEnabled) notes.push('calib', 'info', 'Ekran okuma ayarlardan kapalı', 30);
+  pushNotes();
   pushState();
 }
 
@@ -318,6 +364,7 @@ async function runPrematch(match) {
       scouting: state.scouting,
       myCiv: state.myCiv,
       build: state.build,
+      candidates: state.buildAuto?.status === 'waiting' ? autoCandidates : null,
       matches: store.matches,
       loadAnalysis: (id) => postgame.load(id),
       mapName: readMapName(),
@@ -328,8 +375,12 @@ async function runPrematch(match) {
     Object.assign(state.ai, { plan, planStatus: 'done' });
     coach.addAlerts(plan.planAdimlari.map((a) => ({ at: Math.round(a.dakika * 60), level: 'info', text: `Koç: ${a.mesaj}`, short: a.mesaj })));
     if (match.matchId) store.saveMatch({ matchId: match.matchId, aiPlan: plan });
+    const picked = autoCandidates?.find((b) => b.id === plan.buildSecimi);
+    if (picked) applyAutoBuild(picked, plan.buildGerekcesi, 'YZ');
+    else autoBuildByRule();
   } catch (err) {
     Object.assign(state.ai, { planStatus: 'error', planError: err.message });
+    if (state.match === match) autoBuildByRule();
   }
   pushState();
 }
@@ -353,8 +404,13 @@ async function liveImages() {
   return out;
 }
 
+function commandMode() {
+  return store.settings.coachMode === 'yonet';
+}
+
 function liveIntervalMs() {
   if (monitor.combat) return LIVE_COMBAT_INTERVAL_MS;
+  if (commandMode()) return LIVE_COMMAND_INTERVAL_MS;
   return Math.max(1, Number(store.settings.aiLiveIntervalMin) || 3) * 60 * 1000;
 }
 
@@ -362,7 +418,7 @@ function liveIntervalMs() {
 // tehlike tetikleri bilgi tetiklerinin yerini alır.
 function requestLive(trigger) {
   if (!aiLiveOn || !ai.available() || store.settings.aiLive === false || state.phase !== 'playing') return;
-  if (liveAutoCalls >= LIVE_MAX_AUTO_CALLS) return;
+  if (liveAutoCalls >= (commandMode() ? LIVE_MAX_COMMAND_CALLS : LIVE_MAX_AUTO_CALLS)) return;
   const cooldown = trigger.urgent ? LIVE_URGENT_COOLDOWN_MS : LIVE_EVENT_COOLDOWN_MS;
   if (aiLiveBusy || Date.now() - lastLiveAt < cooldown) {
     if (!pendingTrigger || (trigger.urgent && !pendingTrigger.urgent)) pendingTrigger = trigger;
@@ -375,7 +431,14 @@ function requestLive(trigger) {
 
 // Her tikte: ertelenen tetik ya da periyodu dolan değerlendirme.
 function scheduleLive() {
-  if (!aiLiveOn || aiLiveBusy) return;
+  if (!aiLiveOn) return;
+  // Takılan istek koçu maç boyunca susturmasın: süresi aşan çağrı bırakılır, sonucu yok sayılır.
+  if (aiLiveBusy && Date.now() - lastLiveAt > LIVE_STUCK_MS) {
+    console.warn('YZ değerlendirmesi takıldı; bırakılıyor');
+    liveSeq++;
+    aiLiveBusy = false;
+  }
+  if (aiLiveBusy) return;
   if (pendingTrigger) {
     const cooldown = pendingTrigger.urgent ? LIVE_URGENT_COOLDOWN_MS : LIVE_EVENT_COOLDOWN_MS;
     if (Date.now() - lastLiveAt >= cooldown) requestLive(pendingTrigger);
@@ -388,8 +451,10 @@ async function runLive({ manual = false, trigger = null } = {}) {
   if (aiLiveBusy || state.phase !== 'playing' || !ai.available()) return;
   if (!manual && store.settings.aiLive === false) return;
   aiLiveBusy = true;
+  const seq = ++liveSeq;
   lastLiveAt = Date.now();
   const combat = monitor.combat;
+  const command = commandMode();
   Object.assign(state.ai, { liveStatus: 'running', liveError: null });
   pushState();
   try {
@@ -414,28 +479,53 @@ async function runLive({ manual = false, trigger = null } = {}) {
       myColor: me?.renk || null,
       localName: myPlayer(state.match)?.name || null,
     });
-    const res = await ai.liveAssessment(context, await liveImages(), { combat });
-    if (state.phase !== 'playing') return;
+    const res = await ai.liveAssessment(context, await liveImages(), { combat, command });
+    if (seq !== liveSeq || state.phase !== 'playing') return;
     const simdiYap = res.simdiYap || [];
     const uret = res.uret || [];
+    const komutlar = command ? (res.komutlar || []).filter((k) => k?.metin).slice(0, 4) : [];
+    // Köylü dağılımı: YZ'nin oranları ekrandan okunan gerçek köylü sayısına oturtulur (toplam tutar).
+    const target = combat ? null : fitDistribution(res.dagilim, lastHud?.villagers ?? null);
+    aiTarget = target ? { target, at: Date.now() } : null;
     ledger.observe(res.gozlem, mmss(elapsed));
-    state.ai.live = [{ at: mmss(elapsed), combat, trigger: trigger?.reason || null, ...res, simdiYap, uret }, ...state.ai.live].slice(0, 6);
+    state.ai.live = [{ at: mmss(elapsed), combat, command, trigger: trigger?.reason || null, ...res, simdiYap, uret, komutlar, hedefDagilim: target ? distributionLine(target) : null }, ...state.ai.live].slice(0, 6);
     state.ai.liveStatus = 'done';
-    broadcast('alert', { level: res.risk === 'yüksek' ? 'danger' : 'info', text: `Koç: ${simdiYap[0] || res.durum}` });
+    broadcast('alert', { level: res.risk === 'yüksek' ? 'danger' : 'info', text: `Koç: ${komutlar[0]?.metin || simdiYap[0] || res.durum}` });
     // Sade overlay: her değerlendirme bir öncekinin notlarının yerini alır (bayat tavsiye kalmasın).
     const ttl = Math.round(liveIntervalMs() / 1000) + 60;
     aiRisk = res.uyari && res.risk !== 'düşük' ? res.uyari : null;
+    notes.remove('ai-err');
     setOrRemove('ai-risk', res.risk === 'yüksek' ? 'danger' : 'info', res.uyari, ttl);
-    setOrRemove('ai-do', 'info', simdiYap[0], 120);
-    setOrRemove('ai-uret', 'info', uret.length ? `Üret: ${uret.join(' · ')}` : '', ttl);
-    setOrRemove('ai-gelistir', 'info', res.gelistir ? `Geliştir: ${res.gelistir}` : '', ttl);
+    notes.removeWhere((n) => n.key.startsWith('cmd-'));
+    if (command) {
+      // Yönet modu: sıralı komutlar + hedef dağılım; ayrı "şimdi/üret/geliştir" notlarına gerek yok.
+      komutlar.forEach((k, i) => notes.push(`cmd-${i}`, 'cmd', `${i + 1}. ${k.metin}`, ttl));
+      for (const key of ['ai-do', 'ai-uret', 'ai-gelistir']) notes.remove(key);
+      setOrRemove('cmd-dist', 'cmd', target ? distributionLine(target) : '', ttl);
+    } else {
+      setOrRemove('ai-do', 'info', simdiYap[0], 120);
+      setOrRemove('ai-uret', 'info', uret.length ? `Üret: ${uret.join(' · ')}` : '', ttl);
+      setOrRemove('ai-gelistir', 'info', res.gelistir ? `Geliştir: ${res.gelistir}` : '', ttl);
+    }
     pushNotes();
   } catch (err) {
+    if (seq !== liveSeq) return;
     Object.assign(state.ai, { liveStatus: 'error', liveError: err.message });
+    // Sessizce susmasın: koçun neden bakamadığı overlay'de de görünsün.
+    notes.push('ai-err', 'info', `Koç bakamadı: ${err.message}`.slice(0, 70), 90);
+    pushNotes();
   } finally {
-    aiLiveBusy = false;
+    if (seq === liveSeq) aiLiveBusy = false;
   }
   pushState();
+}
+
+// Köylü kaydırma notunun hedefi: yönet modunda (ya da build bitince) YZ'nin son hedefi, yoksa build adımı.
+function distributionTarget() {
+  const fresh = aiTarget && Date.now() - aiTarget.at < 3 * 60 * 1000;
+  const view = coach.buildView();
+  if (fresh && (commandMode() || !view || !view.next)) return aiTarget.target;
+  return coach.currentStep();
 }
 
 function setOrRemove(key, level, text, ttl) {
@@ -469,6 +559,7 @@ function resetLiveWatch() {
   identifyWanted = false;
   liveAutoCalls = 0;
   pendingTrigger = null;
+  aiTarget = null;
   state.ai.combat = false;
   state.ai.players = null;
 }
@@ -670,7 +761,7 @@ function startScreenReading() {
       broadcast('hud', snap);
       const t = coach.elapsed();
       handleMonitor(monitor.observe({ t, hud: snap }));
-      hudNotes = hudCoach.evaluate(snap, t, coach.currentStep(), { combat: monitor.combat });
+      hudNotes = hudCoach.evaluate(snap, t, distributionTarget(), { combat: monitor.combat });
     },
   });
 }
@@ -831,6 +922,7 @@ function startTicking() {
     notes.setState([...monitor.notes(), ...hudNotes, ...teamNotes(lastHud, mates, view.elapsed)]);
     pushNotes();
     scheduleLive();
+    keepOverlayOnTop();
     sendTeamStatus(view.elapsed);
     if (team) {
       state.team = teamView();
@@ -944,6 +1036,10 @@ function createDashboard() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
   dashboardWin.loadFile(path.join(RENDERER, 'dashboard', 'index.html'));
+  dashboardWin.webContents.on('render-process-gone', (_e, details) => {
+    console.warn('panel çöktü:', details.reason);
+    if (dashboardWin && !dashboardWin.isDestroyed()) dashboardWin.reload();
+  });
   dashboardWin.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -976,6 +1072,35 @@ function createOverlay() {
   overlayWin.once('ready-to-show', () => {
     if (state.overlayEnabled) overlayWin.showInactive();
   });
+  // Overlay'in sayfası çöker ya da donup düzelirse notlar kaybolmasın: yeniden kur / tekrar gönder.
+  const win = overlayWin;
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.warn('overlay çöktü:', details.reason);
+    if (overlayWin !== win) return;
+    overlayWin = null;
+    if (!win.isDestroyed()) win.destroy();
+    createOverlay();
+  });
+  win.on('unresponsive', () => console.warn('overlay yanıt vermiyor'));
+  win.on('responsive', resendOverlay);
+  win.webContents.on('did-finish-load', resendOverlay);
+}
+
+function resendOverlay() {
+  lastNotesJson = '';
+  pushNotes();
+  pushState();
+}
+
+// Oyun tam ekrana geçince ya da Windows'un "yanıt vermiyor" penceresinden sonra overlay oyunun
+// arkasında kalabiliyor; maç sırasında birkaç saniyede bir en üste geri alınır.
+let lastOverlayRaise = 0;
+function keepOverlayOnTop() {
+  if (!overlayWin || overlayWin.isDestroyed() || !state.overlayEnabled || Date.now() - lastOverlayRaise < 5000) return;
+  lastOverlayRaise = Date.now();
+  overlayWin.setAlwaysOnTop(true, 'screen-saver');
+  if (!overlayWin.isVisible()) overlayWin.showInactive();
+  overlayWin.moveTop();
 }
 
 // Kısayollara anında onay: overlay modundan ve maç durumundan bağımsız, birkaç saniye görünür.
@@ -1019,7 +1144,26 @@ const SHORTCUTS = {
     state.cardsPinned = state.cardsVisible;
     pushState();
   },
+  'Control+Alt+M': () => {
+    const s = store.updateSettings({ coachMode: commandMode() ? 'normal' : 'yonet' });
+    broadcast('settings', s);
+    onCoachModeChanged();
+  },
 };
+
+// Mod değişince: kısa onay, eski moddan kalan notlar silinir, yönet modunda hemen ilk komutlar.
+function onCoachModeChanged() {
+  const on = commandMode();
+  flash(on ? 'Yönet modu: koç komut verecek' : 'Normal mod');
+  if (on) {
+    for (const key of ['ai-do', 'ai-uret', 'ai-gelistir']) notes.remove(key);
+    requestLive({ reason: 'Yönet modu açıldı', urgent: true });
+  } else {
+    notes.removeWhere((n) => n.key.startsWith('cmd-'));
+  }
+  pushNotes();
+  pushState();
+}
 
 function registerShortcuts() {
   for (const [accel, fn] of Object.entries(SHORTCUTS)) {
@@ -1042,6 +1186,7 @@ function registerIpc() {
     if ('aiLiveIntervalMin' in patch) allowed.aiLiveIntervalMin = Math.min(10, Math.max(1, Number(patch.aiLiveIntervalMin) || 3));
     if ('aiProvider' in patch) allowed.aiProvider = patch.aiProvider === 'claude' ? 'claude' : 'gemini';
     if ('overlayMode' in patch) allowed.overlayMode = patch.overlayMode === 'detailed' ? 'detailed' : 'simple';
+    if ('coachMode' in patch) allowed.coachMode = patch.coachMode === 'yonet' ? 'yonet' : 'normal';
     if ('teamSyncEnabled' in patch) allowed.teamSyncEnabled = Boolean(patch.teamSyncEnabled);
     if ('teamCode' in patch) allowed.teamCode = String(patch.teamCode || '').trim().slice(0, 64) || null;
     if ('teamServerUrl' in patch) allowed.teamServerUrl = /^https:\/\//.test(String(patch.teamServerUrl || '')) ? String(patch.teamServerUrl).trim() : null;
@@ -1050,6 +1195,7 @@ function registerIpc() {
     if ('profileId' in allowed) state.localProfileId = allowed.profileId || watcher?.parser.localProfileId || null;
     if ('overlayEnabled' in patch) setOverlayEnabled(Boolean(patch.overlayEnabled));
     if ('aiProvider' in allowed) refreshAiState();
+    if ('coachMode' in allowed) onCoachModeChanged();
     broadcast('settings', s);
     pushState();
     return s;
@@ -1059,8 +1205,19 @@ function registerIpc() {
   ipcMain.handle('builds:select', async (_e, civSlug, buildId) => {
     store.updateSettings({ buildByCiv: { ...store.settings.buildByCiv, [civSlug]: buildId } });
     if (state.myCiv?.slug === civSlug) {
-      state.build = await library.get(state.myCiv.guide, buildId);
-      coach.setBuild(state.build);
+      if (buildId === 'auto') {
+        // Maç sırasında otomatiğe geçildi: plan seçtiyse onu, yoksa kuralı uygula.
+        autoCandidates = await library.list(state.myCiv.guide);
+        state.buildAuto = { status: 'waiting' };
+        const picked = autoCandidates.find((b) => b.id === state.ai.plan?.buildSecimi);
+        if (picked) applyAutoBuild(picked, state.ai.plan.buildGerekcesi, 'YZ');
+        else if (state.scouting) autoBuildByRule();
+      } else {
+        autoCandidates = null;
+        state.buildAuto = null;
+        state.build = await library.get(state.myCiv.guide, buildId);
+        coach.setBuild(state.build);
+      }
       pushState();
     }
     return store.settings.buildByCiv;

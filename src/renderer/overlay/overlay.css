@@ -84,6 +84,8 @@ html, body { background: transparent; overflow: hidden; height: 100%; user-selec
 }
 .note-pill.lvl-danger { border-left-color: var(--danger); color: #ffd9d2; background: rgba(74, 20, 18, 0.9); }
 .note-pill.lvl-chance { border-left-color: var(--chance); }
+/* Yönet modu komutları: mavi şerit, biraz daha belirgin. */
+.note-pill.lvl-cmd { border-left-color: var(--info); color: #e3eefa; background: rgba(13, 28, 44, 0.9); border-color: rgba(106, 164, 220, 0.4); }
 
 /* ---- Kısayol onayı ---- */
 .flash { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); padding: 8px 18px; border-radius: 6px; font-size: 16px; font-weight: 700; background: rgba(12, 18, 26, 0.92); border: 1px solid var(--gold); color: var(--text); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5); }

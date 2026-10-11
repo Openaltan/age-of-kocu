@@ -5,8 +5,9 @@
 //  - süreli notlar: belirli bir süre görünür (plan hatırlatması, YZ riski, takım çağrısı)
 // Aynı anahtar tek not olarak görünür; tehlike notları üstte.
 
-const ORDER = { danger: 0, info: 1, chance: 2 };
-const MAX_NOTES = 6;
+// cmd: yönet modundaki koç komutları; tehlikeden sonra, bilgiden önce ve kendi sıralarıyla.
+const ORDER = { danger: 0, cmd: 1, info: 2, chance: 3 };
+const MAX_NOTES = 8;
 
 class NoteBoard {
   constructor() {
@@ -39,7 +40,11 @@ class NoteBoard {
     for (const [k, n] of this.timed) if (n.until <= now) this.timed.delete(k);
     const byKey = new Map();
     for (const n of [...this.state, ...this.timed.values()]) if (!byKey.has(n.key)) byKey.set(n.key, { key: n.key, level: n.level, text: n.text });
-    return [...byKey.values()].sort((a, b) => (ORDER[a.level] ?? 1) - (ORDER[b.level] ?? 1)).slice(0, MAX_NOTES);
+    // Aynı seviyede anahtar sırası korunur (komutlar cmd-0, cmd-1… sırasıyla).
+    const rank = (n) => ORDER[n.level] ?? 2;
+    return [...byKey.values()]
+      .sort((a, b) => rank(a) - rank(b) || (a.level === 'cmd' ? a.key.localeCompare(b.key) : 0))
+      .slice(0, MAX_NOTES);
   }
 }
 

@@ -100,3 +100,19 @@ test('canlı bağlam build notlarını, sıradaki adımları ve olayları içeri
   assert.strictEqual(c.buildAdimi.buildBitti, false);
   assert.deepStrictEqual(c.olaylar, [{ saniyeOnce: 3, olay: 'Üssünde düşman' }]);
 });
+
+test('simge yapılar hangi çağa geçirdiğiyle listelenir', () => {
+  const s = civSpecials(gamedata, 'zx', 1);
+  assert.ok(s.simgeYapilar.includes('Jiangnan Tower → Feodal'));
+  assert.ok(s.simgeYapilar.includes('Mount Lu Academy → Kale'));
+  assert.ok(!s.binalar.some((b) => b.startsWith('Jiangnan Tower')));
+});
+
+test('otomatik build için aday özetleri maç öncesi bağlama girer', () => {
+  const { prematchContext } = require('../src/main/aiContext');
+  const scouting = { kind: 'rm_3v3', allies: [], enemies: [] };
+  const c = prematchContext({ scouting, build: null, candidates: [{ id: 'x', name: 'Tower Rush', strategy: 'Rush', steps: build.steps }], matches: [], loadAnalysis: () => null });
+  assert.deepStrictEqual(c.buildSecenekleri[0].id, 'x');
+  assert.match(c.buildSecenekleri[0].acilis, /\[archery range\]/);
+  assert.strictEqual(prematchContext({ scouting, build: null, matches: [], loadAnalysis: () => null }).buildSecenekleri, undefined);
+});

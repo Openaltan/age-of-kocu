@@ -107,7 +107,7 @@ function buildCoachDom(b) {
       ': ', stepSentence(b.next),
       b.nextInSec != null ? el('div', { class: 'bar' }, bar) : null,
     ) : el('div', { class: 'next', text: 'Build order bitti. Artık oyunu oku, ekonomiyi büyütmeye devam et.' }),
-    el('div', { class: 'keys', text: 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · O gizle' }),
+    el('div', { class: 'keys', text: 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · M yönet modu · O gizle' }),
   );
   return { root, clock: clockEl, bar: b.nextInSec != null ? bar : null, nextIn, spanSec: null };
 }
@@ -139,16 +139,19 @@ function renderAi() {
   const busy = a.planStatus === 'running' ? 'Koç oyun planını hazırlıyor…' : a.liveStatus === 'running' ? 'Koç ekranına bakıyor…' : null;
   const err = a.liveStatus === 'error' ? a.liveError : a.planStatus === 'error' ? a.planError : null;
   fill($ai, el('div', { class: `panel ai lvl-${live ? (live.risk === 'yüksek' ? 'danger' : live.risk === 'orta' ? 'info' : 'chance') : 'info'}` },
-    el('div', { class: 'ai-head' }, el('b', { text: a.combat ? 'Koç · savaş' : 'Koç' }), live && !showPlan ? el('span', { text: `${live.at} · ${RISK_TR[live.risk] || ''}` }) : null),
+    el('div', { class: 'ai-head' }, el('b', { text: `Koç${live?.command ? ' · yönet' : ''}${a.combat ? ' · savaş' : ''}` }), live && !showPlan ? el('span', { text: `${live.at} · ${RISK_TR[live.risk] || ''}` }) : null),
     showPlan && a.plan ? [
       el('p', { class: 'ai-main', text: a.plan.ozet }),
       el('ul', {}, a.plan.rakipTahminleri.slice(0, 3).map((t) => el('li', {}, el('b', { text: `${t.oyuncu}: ` }), `${t.tahmin} (${t.zamanlama})`))),
     ] : null,
     !showPlan && live ? [
       el('p', { class: 'ai-main', text: live.durum }),
-      el('ol', {}, live.simdiYap.map((x) => el('li', { text: x }))),
-      live.uret?.length ? el('p', { class: 'ai-sub' }, el('b', { text: 'Üret: ' }), live.uret.join(' · ')) : null,
-      live.gelistir ? el('p', { class: 'ai-sub' }, el('b', { text: 'Geliştir: ' }), live.gelistir) : null,
+      live.komutlar?.length
+        ? el('ol', {}, live.komutlar.map((k) => el('li', { text: k.metin })))
+        : el('ol', {}, live.simdiYap.map((x) => el('li', { text: x }))),
+      live.hedefDagilim ? el('p', { class: 'ai-sub', text: live.hedefDagilim }) : null,
+      !live.komutlar?.length && live.uret?.length ? el('p', { class: 'ai-sub' }, el('b', { text: 'Üret: ' }), live.uret.join(' · ')) : null,
+      !live.komutlar?.length && live.gelistir ? el('p', { class: 'ai-sub' }, el('b', { text: 'Geliştir: ' }), live.gelistir) : null,
       el('p', { class: 'ai-sub' }, el('b', { text: 'Tahmin: ' }), live.tahmin),
       el('p', { class: 'ai-sub' }, el('b', { text: 'Hedef: ' }), live.sonrakiHedef),
     ] : null,

@@ -71,3 +71,18 @@ test('ekrandan okunan köylü sayısı adımı belirler, elle kaydırma 20 sn ko
   r.syncVillagers(14, 60); // 25 sn sonra tekrar eşitle
   assert.strictEqual(r.index(60), 4);
 });
+
+const { pickBuild } = require('../src/main/coach');
+
+test('otomatik build: erken baskıcı rakibe savunmalı, uzun maçta zayıflara ekonomik açılış', () => {
+  const builds = [
+    { id: 'a', name: 'Feudal Rush', strategy: 'Rush' },
+    { id: 'b', name: 'Safe Tower Opening', strategy: '' },
+    { id: 'c', name: 'Fast Castle Boom', strategy: 'Fast Castle' },
+  ];
+  const enemy = (texts, level = 'danger') => ({ insights: texts.map((text) => ({ level, text })) });
+  assert.strictEqual(pickBuild(builds, { enemies: [enemy(['Erken baskıyı seviyor'])] }).build.id, 'b');
+  assert.strictEqual(pickBuild(builds, { enemies: [enemy(['Uzayan maçlarda zayıflıyor'], 'chance')] }).build.id, 'c');
+  assert.deepStrictEqual(pickBuild(builds, null), { build: builds[0], reason: 'En yüksek puanlı build' });
+  assert.deepStrictEqual(pickBuild([], null), { build: null, reason: null });
+});

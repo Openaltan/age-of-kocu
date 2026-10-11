@@ -45,7 +45,37 @@ test('canlı değerlendirme: görsel + şema + yedek model ile istek atar', asyn
   const text = req.messages[0].content[1].text;
   assert.match(text, /Normal mod/);
   assert.match(text, /Görüntüler sırasıyla: 1\) oyuncunun tam ekranı/);
-  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'durum', 'simdiYap', 'uret', 'gelistir', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
+  assert.deepStrictEqual(req.output_config.format.schema.required, ['uyari', 'durum', 'simdiYap', 'uret', 'gelistir', 'dagilim', 'komutlar', 'tahmin', 'risk', 'sonrakiHedef', 'gozlem']);
+});
+
+test('yönet modunda istem sıralı komut ister; normal modda komutlar boş', async () => {
+  const client = fakeClient(textReply({}));
+  const ai = claudeCoach(client);
+  await ai.liveAssessment({}, [], { command: true });
+  await ai.liveAssessment({}, []);
+  const [yonet, normal] = client.calls.map((c) => c.messages[0].content[0].text);
+  assert.match(yonet, /YÖNET MODU/);
+  assert.match(yonet, /simgeYapilar/);
+  assert.doesNotMatch(normal, /YÖNET MODU/);
+  assert.match(normal, /komutlar: \[\] \(normal mod\)/);
+  const schema = client.calls[0].output_config.format.schema;
+  assert.deepStrictEqual(schema.properties.dagilim.required, ['yemek', 'odun', 'altin', 'tas']);
+  assert.ok(schema.properties.komutlar.items.properties.tur.enum.includes('cag'));
+});
+
+test('maç öncesi plan build seçimi alanlarını içerir', async () => {
+  const client = fakeClient(textReply({}));
+  await claudeCoach(client).prematchPlan({ buildSecenekleri: [{ id: 'x' }] });
+  const req = client.calls[0];
+  assert.ok(req.output_config.format.schema.required.includes('buildSecimi'));
+  assert.match(req.messages[0].content[0].text, /buildSecimi/);
+});
+
+test('Gemini: takılan istek zaman aşımıyla anlaşılır hata olur', async () => {
+  const hang = (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  const p = new GeminiProvider({ getApiKey: () => 'g', fetchImpl: hang });
+  p.timeoutMs = 20;
+  await assert.rejects(new AiCoach({ getProvider: () => p }).testConnection(), /Gemini yanıtı gecikti/);
 });
 
 test('savaş modunda istem sadece çatışmaya odaklanır', async () => {

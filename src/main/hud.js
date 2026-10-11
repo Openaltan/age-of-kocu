@@ -170,4 +170,31 @@ function distributionFix(vil, step) {
   };
 }
 
-module.exports = { FIELDS, AREAS, RESOURCES, parseField, HudState, HudCoach, distributionFix };
+// YZ'nin hedef dağılımını (yemek/odun/altin/tas) gerçek köylü sayısına oturtur: oranlar korunur,
+// toplam her zaman tutar (en büyük kalan yöntemi). Hepsi 0 ise null.
+function fitDistribution(d, total) {
+  const raw = { food: Number(d?.yemek) || 0, wood: Number(d?.odun) || 0, gold: Number(d?.altin) || 0, stone: Number(d?.tas) || 0 };
+  for (const k of RESOURCES) raw[k] = Math.max(0, raw[k]);
+  const sum = RESOURCES.reduce((s, k) => s + raw[k], 0);
+  if (!sum) return null;
+  const n = total > 0 ? Math.round(total) : Math.round(sum);
+  const exact = RESOURCES.map((k) => ({ k, v: (raw[k] / sum) * n }));
+  const out = Object.fromEntries(exact.map(({ k, v }) => [k, Math.floor(v)]));
+  let left = n - RESOURCES.reduce((s, k) => s + out[k], 0);
+  for (const { k } of [...exact].sort((a, b) => (b.v % 1) - (a.v % 1))) {
+    if (left <= 0) break;
+    out[k]++;
+    left--;
+  }
+  return out;
+}
+
+const RES_TR = { food: 'yemek', wood: 'odun', gold: 'altın', stone: 'taş' };
+
+// "Köylü 16: 8 yemek · 5 odun · 3 altın"
+function distributionLine(target) {
+  const total = RESOURCES.reduce((s, k) => s + target[k], 0);
+  return `Köylü ${total}: ${RESOURCES.filter((k) => target[k] > 0).map((k) => `${target[k]} ${RES_TR[k]}`).join(' · ')}`;
+}
+
+module.exports = { FIELDS, AREAS, RESOURCES, parseField, HudState, HudCoach, distributionFix, fitDistribution, distributionLine };

@@ -22,7 +22,9 @@ Kurallar:
 // Yapılandırılmış çıktı şemaları (her nesnede additionalProperties: false ve tüm alanlar zorunlu).
 const obj = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const str = { type: 'string' };
+const num = { type: 'number' };
 const strArr = { type: 'array', items: str };
+const COMMAND_KINDS = ['ekonomi', 'insaat', 'uretim', 'arastirma', 'cag', 'askeri'];
 
 const SCHEMAS = {
   plan: obj({
@@ -31,6 +33,8 @@ const SCHEMAS = {
     planAdimlari: { type: 'array', items: obj({ dakika: { type: 'number' }, mesaj: str }) },
     kontraOnerisi: str,
     takimKoordinasyonu: str,
+    buildSecimi: str,
+    buildGerekcesi: str,
   }),
   live: obj({
     uyari: str,
@@ -38,6 +42,10 @@ const SCHEMAS = {
     simdiYap: strArr,
     uret: strArr,
     gelistir: str,
+    // Hedef köylü dağılımı (sayı). Metni uygulama üretir ki toplam her zaman tutsun.
+    dagilim: obj({ yemek: num, odun: num, altin: num, tas: num }),
+    // Yönet modunda sıralı komutlar; normal modda boş.
+    komutlar: { type: 'array', items: obj({ tur: { type: 'string', enum: COMMAND_KINDS }, metin: str }) },
     tahmin: str,
     risk: { type: 'string', enum: ['düşük', 'orta', 'yüksek'] },
     sonrakiHedef: str,
@@ -132,10 +140,37 @@ class GeminiProvider {
     this.models = models;
     this.fetch = fetchImpl;
     this.retryDelayMs = 3000;
+    // Takılan istek koçu susturmasın: her deneme en fazla bu kadar bekler.
+    this.timeoutMs = 60 * 1000;
   }
 
   available() {
     return Boolean(this.getApiKey());
+  }
+
+  // Tek deneme: { status, ok, data }. Süre, yanıt gövdesinin okunmasını da kapsar.
+  async post(key, body) {
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, this.timeoutMs);
+    try {
+      const res = await this.fetch(GEMINI_URL, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { status: res.status, ok: res.ok, data };
+    } catch (err) {
+      if (timedOut) throw new AiError('Gemini yanıtı gecikti');
+      throw new AiError(`Gemini'ye ulaşılamadı: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async complete({ system, content, schema, effort, fast = false }) {
@@ -157,16 +192,12 @@ class GeminiProvider {
     outer: for (const model of models) {
       for (let attempt = 0; attempt < 2; attempt++) {
         if (attempt) await new Promise((r) => setTimeout(r, this.retryDelayMs));
-        res = await this.fetch(GEMINI_URL, {
-          method: 'POST',
-          headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, ...base }),
-        });
+        res = await this.post(key, { model, ...base });
         if (res.status === 429) break;
         if (res.status !== 503) break outer;
       }
     }
-    const data = await res.json().catch(() => ({}));
+    const { data } = res;
     if (res.status === 503) throw new AiError('Google sunucuları şu an çok yoğun; biraz sonra tekrar dene');
     if (res.status === 429) throw new AiError('Gemini ücretsiz kotası tüm modellerde doldu; yarın sıfırlanır');
     if (res.status === 400 || res.status === 401 || res.status === 403) {
@@ -230,6 +261,8 @@ class AiCoach {
 - planAdimlari: maç içinde benim (ben alanındaki oyuncu) için 4-7 zamanlı hatırlatma; dakika (ondalıklı olabilir) ve en fazla 6 kelimelik mesaj.
 - kontraOnerisi: rakip ülke/oyun tarzlarına karşı hangi birimlere ağırlık vermeliyim.
 - takimKoordinasyonu: takım arkadaşlarımla nasıl rol paylaşmalıyız.
+- buildSecimi: buildSecenekleri verildiyse rakiplere ve haritaya en uygun build'in id'si (listeden aynen); verilmediyse "".
+- buildGerekcesi: seçimin tek cümlelik nedeni (ör. "İki rakip erken baskıcı: savunmalı açılış"); seçim yoksa "".
 
 Veri:
 ${JSON.stringify(context)}`,
@@ -239,19 +272,32 @@ ${JSON.stringify(context)}`,
 
   // Maç içi anlık değerlendirme. images: [{ data (base64), mediaType, label }] — ilki tam ekran,
   // varsa ikincisi mini haritanın yakın görüntüsü. combat: savaş modu (sadece çatışmayı yönet).
-  liveAssessment(context, images = [], { combat = false } = {}) {
+  // command: yönet modu (oyuncu koçun aracı; her bakışta sıralı komutlar).
+  liveAssessment(context, images = [], { combat = false, command = false } = {}) {
     const content = images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } }));
     const seen = images.length ? `Görüntüler sırasıyla: ${images.map((img, i) => `${i + 1}) ${img.label}`).join(', ')}. ` : '';
     const mode = combat
       ? `SAVAŞ MODU: oyuncu şu an çatışmada ya da baskı altında (tetik: ${context.tetik || 'kayıp/düşman algılandı'}). Sadece çatışmayı yönet: savaş mı geri çekilme mi, köylüleri garnizona/merkeze al, kule/duvar, kontra birim, takımdan yardım. Ekonomi ve çağ atlama tavsiyesi verme; gelistir sadece savaşı etkileyen bir geliştirmeyse dolu olsun. uyari boş kalamaz.`
       : 'Normal mod: ekonomi, üretim ve zamanlamayı yönet; tehlike varsa onu öne al.';
+    const commandMode = command
+      ? `YÖNET MODU: oyuncu senin aracın; kendi karar vermez, sadece senin komutlarını uygular. Her bakışta komutlar alanına 2-4 sıralı, hemen uygulanabilir komut yaz (her biri en fazla 9 kelime, sayılı ve somut):
+  * insaat: hangi binayı nereye/kaç tane ("2. ev ve kışla kur", "Odun kampını ormana taşı").
+  * uretim: hangi binadan hangi birimden kaç tane ("Ahırdan 6 atlı bas").
+  * arastirma: hangi binada hangi teknoloji ("Değirmende Tekerlekli El Arabası araştır").
+  * cag: çağ atlarken hangi simge yapıyla (ulkeyeOzel.simgeYapilar'dan) ve ne zaman ("Feodal: Jiangnan Kulesi kur, 4:30'da"). Rakiplere göre seç: baskı bekleniyorsa savunma veren simge yapı.
+  * askeri: baskın/savunma emri: hedef, birim ve sayı ("6 atlıyla kırmızının altın madenine baskın", "Okçuları kasaba merkezine çek").
+  * ekonomi: köylü dışındaki ekonomi işleri (çiftlik, tüccar, ikinci kasaba merkezi).
+  Rakibin ülkesine, görülen ordusuna ve geçmişine göre şekil al; build order sürüyorsa ondan sapma gerekiyorsa açıkça söyle. simdiYap'ı da komutların ilkiyle aynı tut.`
+      : 'komutlar: [] (normal mod).';
     content.push({
       type: 'text',
       text: `Maç sürüyor. ${seen}Sen kontrolcü bir koçsun: her zaman somut emir ver; oyuncu senin dediğini yapacak.
 ${mode}
+${commandMode}
+- dagilim: köylülerin şu an olması gereken dağılımı (yemek/odun/altın/taş köylü sayısı). Toplamı ekrandan okunan toplam köylüye (yoksa tahminine) eşit olsun. Köylü dağılım sayılarını simdiYap ya da komut metinlerine yazma; uygulama onları dagilim'dan kendisi hesaplar. Savaşta ya da emin değilsen hepsi 0.
 - uyari: oyuncunun ekranında köşede duracak tek not, en fazla 6 kelime. Gerçek bir risk ya da kritik eksik varsa yaz; yön biliniyorsa oyuncunun yapısına göre ekle (ör. "Rakip gelebilir · değirmen tarafından", "Baskın · altın madeninde", "Altın bitiyor"); yoksa "".
 - durum: tek kısa cümle.
-- simdiYap: en fazla 3 madde, her biri en fazla 6 kelime, sayılı ("Oduna 2 köylü kaydır").
+- simdiYap: en fazla 3 madde, her biri en fazla 6 kelime, somut ("Kışla kur", "Ahırdan 4 atlı bas").
 - uret: en fazla 2 madde, her biri en fazla 7 kelime: hangi binadan hangi birimden kaç tane ("Okçu atölyesinden 6 okçu", "2. kışla kur, mızrakçı bas"). Rakiplerin ülkesine ve görülen ordusuna karşı kontra seç. Gerekmiyorsa [].
 - gelistir: şu an alınması gereken tek geliştirme ve binası ("Demirci: Erken Koşum"); yoksa "".
 - tahmin: rakiplerin önümüzdeki 2-3 dakikada büyük olasılıkla ne yapacağı.
@@ -264,12 +310,12 @@ Verilerin anlamı:
 - usDefteri: maç boyunca oyuncunun kendi üssünde görülenler ve build'e göre yapılmış olması gerekenler. Bir şey şu anki görüntüde yok diye "yok" sayma.
 - olaylar: yerel algılayıcıların son olayları (mini harita düşman görüşleri, nüfus/köylü kaybı, çağ atlamaları). Bunlar kesin bilgidir; önceliği bunlara ver.
 - haritadaGorulenler: son 90 saniyede mini haritada görülen düşmanlar (kısa süre görünüp kaybolanlar dahil).
-- ulkeyeOzel: oyuncunun ülkesine özel birim, teknoloji ve binalar (çağ numarasıyla).
+- ulkeyeOzel: oyuncunun ülkesine özel birim, teknoloji ve binalar (çağ numarasıyla); simgeYapilar: çağ atlamak için kurulabilecek simge yapılar (hangi çağa geçirdiği).
 
 Veri:
 ${JSON.stringify(context)}`,
     });
-    return this.ask({ effort: 'low', schema: SCHEMAS.live, content, maxTokens: 4000, fast: combat });
+    return this.ask({ effort: 'low', schema: SCHEMAS.live, content, maxTokens: 5000, fast: combat });
   }
 
   // Sağdaki oyuncu listesini okur: her oyuncunun satırı, rengi ve çağı. image: { data, mediaType }

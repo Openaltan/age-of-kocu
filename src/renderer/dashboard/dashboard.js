@@ -67,6 +67,7 @@ function renderLive() {
     fill(v, 
       el('h1', { text: 'Canlı Maç' }),
       el('p', { class: 'lead', text: 'Ranked maç bulunduğunda yükleme ekranında rakipler otomatik analiz edilir, maç başlayınca koç devreye girer.' }),
+      calibrationWarning(),
       lastMatchBox(),
       el('div', { class: 'box' },
         el('p', {}, el('b', { text: 'Overlay\'in oyunun üstünde görünmesi için: ' }), 'AoE4 › Ayarlar › Grafik › Ekran Modu: ', el('b', { text: 'Tam Ekran Pencereli' }), '.'),
@@ -94,6 +95,9 @@ function renderLive() {
         s.simulated ? el('button', { class: 'btn', onclick: () => api.stopSimulation(), text: 'Denemeyi bitir' }) : null,
       ),
     ),
+    calibrationWarning(),
+    s.buildAuto ? el('p', { class: 'muted' }, el('b', { text: 'Otomatik build: ' }),
+      s.buildAuto.status === 'waiting' ? 'koç rakiplere bakıp seçiyor…' : `${s.buildAuto.name}${s.buildAuto.reason ? ` — ${s.buildAuto.reason}` : ''} (${s.buildAuto.source})`) : null,
     s.phase === 'playing' ? el('div', { id: 'live-step' }) : null,
     s.phase === 'playing' ? [el('h2', { text: 'Takımım' }), el('div', { id: 'live-team' }, teamBox(s.team))] : null,
     aiLiveSection(s),
@@ -101,6 +105,15 @@ function renderLive() {
     sc ? el('div', { class: 'grid' }, sc.enemies.map((c) => playerCard(c))) :
       el('p', { class: 'muted', text: s.scoutingError ? `Analiz başarısız: ${s.scoutingError}` : 'Rakipler analiz ediliyor…' }),
     sc && sc.allies.length ? [el('h2', { text: 'Takımın' }), el('div', { class: 'grid' }, sc.allies.map((c) => playerCard(c, { ally: true })))] : null,
+  );
+}
+
+// Kalibrasyon yoksa kaynak/köylü okuma, mini harita ve kayıp algılama hiç çalışmaz.
+function calibrationWarning() {
+  if (settings?.hudRegions?.fields && settings.screenReadingEnabled !== false) return null;
+  return el('div', { class: 'box' },
+    el('p', { class: 'res-loss', text: settings?.hudRegions?.fields ? 'Ekran okuma ayarlardan kapalı.' : 'Ekran okuma kalibre edilmemiş: koç kaynaklarını, köylülerini ve mini haritayı göremiyor; sadece birkaç dakikada bir ekran görüntüsüne bakıyor.' }),
+    el('button', { class: 'btn primary', text: 'Ekran Okuma ayarına git', onclick: () => show('screen') }),
   );
 }
 
@@ -338,6 +351,7 @@ function teamSettingsSection() {
 
 // ---------- Yapay zekâ koç ----------
 const GUVEN = { 'düşük': 'muted', orta: '', 'yüksek': 'res-loss' };
+const KOMUT_TR = { ekonomi: 'Ekonomi', insaat: 'İnşaat', uretim: 'Üretim', arastirma: 'Araştırma', cag: 'Çağ', askeri: 'Askeri' };
 
 function aiLiveSection(s) {
   const a = s.ai;
@@ -377,7 +391,10 @@ function aiLiveSection(s) {
           x.trigger ? el('span', { class: 'pill', text: `Tetik: ${x.trigger}` }) : null,
         ),
         el('p', { class: 'ai-lead', text: x.durum }),
-        el('ol', {}, x.simdiYap.map((t) => el('li', { text: t }))),
+        x.komutlar?.length
+          ? el('ol', {}, x.komutlar.map((k) => el('li', {}, el('span', { class: 'pill', text: KOMUT_TR[k.tur] || k.tur }), ' ', k.metin)))
+          : el('ol', {}, x.simdiYap.map((t) => el('li', { text: t }))),
+        x.hedefDagilim ? el('p', {}, el('b', { text: 'Hedef dağılım: ' }), x.hedefDagilim) : null,
         x.uret?.length ? el('p', {}, el('b', { text: 'Üret: ' }), x.uret.join(' · ')) : null,
         x.gelistir ? el('p', {}, el('b', { text: 'Geliştir: ' }), x.gelistir) : null,
         el('p', {}, el('b', { text: 'Tahmin: ' }), x.tahmin),
@@ -425,7 +442,7 @@ const PROVIDERS = {
     label: 'Google Gemini (ücretsiz katman)',
     keyUrl: 'https://aistudio.google.com/apikey',
     keyHint: 'Google AI Studio › "Get API key" ile ücretsiz alınır.',
-    cost: 'Ücretsiz katmanda günlük istek kotası var. Koç periyodik bakışa ek olarak önemli anlarda (kayıp, üssünde düşman, çağ atlama) hemen bakar, savaşta 30 saniyede bir bakar: 30 dakikalık maç kabaca 20-40 istek (maç başına en fazla 80). Kota dolarsa YZ o gün susar, yerel uyarılar (mini harita, kayıp, ev, boşta köylü) çalışmaya devam eder. Ücretsiz katmanda Google verileri ürün geliştirmede kullanabilir.',
+    cost: 'Ücretsiz katmanda günlük istek kotası var. Koç periyodik bakışa ek olarak önemli anlarda (kayıp, üssünde düşman, çağ atlama) hemen bakar, savaşta 30 saniyede bir bakar: 30 dakikalık maç kabaca 20-40 istek (maç başına en fazla 80). Yönet modunda 45 saniyede bir bakar: 30 dakikalık maç 50-70 istek (en fazla 150); kota çabuk dolabilir. Kota dolarsa YZ o gün susar, yerel uyarılar (mini harita, kayıp, ev, boşta köylü) çalışmaya devam eder. Ücretsiz katmanda Google verileri ürün geliştirmede kullanabilir.',
   },
   claude: {
     label: 'Anthropic Claude (ücretli, kredi ile)',
@@ -511,14 +528,22 @@ async function loadBuildList(civ, host, refresh) {
     fill(host, el('p', { class: 'muted', text: 'Bu ülke için build bulunamadı.' }));
     return;
   }
-  fill(host, ...builds.map((b) => {
+  const select = async (e, id) => { e.stopPropagation(); settings.buildByCiv = await api.selectBuild(civ.slug, id); loadBuildList(civ, host, false); };
+  const auto = el('div', { class: 'build-item' },
+    el('div', {},
+      el('div', { class: 'name', text: 'Otomatik (rakibe göre)' }),
+      el('div', { class: 'sub', text: 'Yükleme ekranında koç rakiplerin ülkesine, oyun tarzına ve geçmişine bakıp aşağıdaki build\'lerden birini seçer (YZ yoksa: erken baskıcı rakibe karşı savunmalı açılış). Seçimi ve nedenini Canlı Maç sayfasında görürsün.' }),
+    ),
+    chosen === 'auto' ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) : el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, 'auto') }),
+  );
+  fill(host, auto, ...builds.map((b) => {
     const item = el('div', { class: `build-item ${openBuildId === b.id ? 'open' : ''}`, onclick: () => { openBuildId = openBuildId === b.id ? null : b.id; loadBuildList(civ, host, false); } },
       el('div', {},
         el('div', { class: 'name', text: b.name }),
         el('div', { class: 'sub', text: [b.author, b.strategy, b.season, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
       ),
       b.id === chosen ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) :
-        el('button', { class: 'btn', text: 'Bunu kullan', onclick: async (e) => { e.stopPropagation(); settings.buildByCiv = await api.selectBuild(civ.slug, b.id); loadBuildList(civ, host, false); } }),
+        el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, b.id) }),
     );
     return openBuildId === b.id ? [item, buildPreview(b)] : item;
   }).flat());
@@ -788,7 +813,7 @@ api.on('matches', (m) => {
   if (current === 'history') renderHistory();
   if (current === 'live') renderLive();
 });
-api.on('settings', (s) => { settings = s; });
+api.on('settings', (s) => { settings = s; renderModeSwitch(); });
 api.on('team', (t) => {
   const host = document.getElementById('live-team');
   if (host && current === 'live') fill(host, teamBox(t));
@@ -798,5 +823,24 @@ api.on('calibration', (img) => { if (current === 'screen') onCalibrationImage(im
 (async () => {
   [state, settings, matches, civList] = await Promise.all([api.getState(), api.getSettings(), api.listMatches(), api.listCivs()]);
   renderStatus();
+  renderModeSwitch();
   show('live');
 })();
+
+// Sağ üstteki koç modu anahtarı: Normal (uyarı/öneri) · Yönet (koç sıralı komut verir).
+function renderModeSwitch() {
+  const mode = settings?.coachMode === 'yonet' ? 'yonet' : 'normal';
+  const btn = (key, label, title) => el('button', {
+    class: `${mode === key ? 'on' : ''} ${key}`,
+    title,
+    text: label,
+    onclick: async () => { if (mode !== key) settings = await api.updateSettings({ coachMode: key }); },
+  });
+  fill(document.getElementById('mode-switch'),
+    el('span', { text: 'Koç modu (Ctrl+Alt+M)' }),
+    el('div', { class: 'seg' },
+      btn('normal', 'Normal', 'Koç uyarır ve önerir; kararı sen verirsin.'),
+      btn('yonet', 'Yönet', 'Koç seni yönetir: 45 saniyede bir sıralı komut (inşaat, üretim, araştırma, çağ atlama, baskın). Daha çok YZ isteği harcar.'),
+    ),
+  );
+}
