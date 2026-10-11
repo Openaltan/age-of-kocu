@@ -865,7 +865,7 @@ function renderModeSwitch() {
     onclick: async () => { if (mode !== key) settings = await api.updateSettings({ coachMode: key }); },
   });
   fill(document.getElementById('mode-switch'),
-    el('span', { text: 'Koç modu (Ctrl+Alt+M)' }),
+    el('span', { text: 'Koç modu (Ctrl+Alt+N)' }),
     el('div', { class: 'seg' },
       btn('normal', 'Normal', 'Koç uyarır ve önerir; kararı sen verirsin.'),
       btn('yonet', 'Yönet', 'Koç seni yönetir: 45 saniyede bir sıralı komut (inşaat, üretim, araştırma, çağ atlama, baskın). Daha çok YZ isteği harcar.'),

@@ -5,7 +5,7 @@ Age of Empires IV için Türkçe maç koçu.
 - **Maç öncesi:** Yükleme ekranında rakiplerin AoE4World'deki halka açık geçmişinden oyun tarzı çıkarılır: favori ülke, erken baskıcı mı, uzun maçta zayıf mı, form durumu.
 - **Maç içi:** Ülkene göre seçtiğin build order adım adım, sayılarla okunur ("11 köylü: 7 yemek, 2 odun, 2 altın"). Rakip analizine göre zamanlı uyarılar gelir.
 - **Ekran okuma:** Maç sırasında saniyede bir kendi ekranındaki kaynaklar, köylü dağılımı, nüfus ve boştaki köylüler okunur (OCR, internetsiz). "Oduna 3 köylü daha", "Ev kur: nüfus 19/20", "2 köylü boşta", "Köylü üretimi durdu" gibi anlık uyarılar gelir; build adımı gerçek köylü sayısına göre ilerler.
-- **Yönet modu (Ctrl+Alt+M ya da panelin sağ üstü):** Koç seni yönetir: 45 saniyede bir sıralı komut verir (ne inşa edilecek, hangi binadan kaç birim, hangi araştırma, hangi simge yapıyla ne zaman çağ atlanacak, nereye kaç birimle baskın). Köylü dağılımı her zaman gerçek köylü sayına oturtulur, toplam tutar. Normal mod (uyarı ve öneri) varsayılandır.
+- **Yönet modu (Ctrl+Alt+N ya da panelin sağ üstü):** Koç seni yönetir: 45 saniyede bir sıralı komut verir (ne inşa edilecek, hangi binadan kaç birim, hangi araştırma, hangi simge yapıyla ne zaman çağ atlanacak, nereye kaç birimle baskın). Köylü dağılımı her zaman gerçek köylü sayına oturtulur, toplam tutar. Normal mod (uyarı ve öneri) varsayılandır.
 - **Otomatik build:** Build Order sayfasında "Otomatik" seçilirse koç yükleme ekranında her rakibin ülkesine, o ülkeyle tecrübesine, oyun tarzına (erken mi bitirir, uzun maçta mı güçlü, ortalama maç süresi) ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına bakıp hazır build'lerden birini seçer (YZ yoksa erken baskıcıya karşı savunmalı açılış).
 - **Serbest build:** Koç hazır build kullanmaz; bu maçın rakiplerine göre tamamen özel bir açılış (adım adım köylü dağılımı, binalar, simge yapıyla çağ atlama) ve maç boyu oyun stili yazar; canlı koç da bu stile göre yönetir.
 - **Mini harita ve oyuncu listesi:** Kalibrasyonda işaretlenirse saniyede bir renkleri okunur (internetsiz). Mini haritada üssüne giren, sana ya da baskın birliğine yaklaşan, kısa süre görünüp kaybolan düşmanlar ve takım arkadaşının üssüne giren düşman anında not olur ("Üssüne saldırı · batı tarafı", "Ordu sana geliyor · güneydoğudan"). Oyuncu listesinden renkler, rakipler (⚔) ve çağ atlamaları anlaşılır. Yalnızca oyunun sana zaten gösterdiği bilgi kullanılır.
@@ -34,7 +34,7 @@ Age of Empires IV için Türkçe maç koçu.
 | Ctrl+Alt+K | Ekran okuma kalibrasyonu için ekran görüntüsü |
 | Ctrl+Alt+Y | Takıma yardım çağrısı |
 | Ctrl+Alt+A | Koça sor: YZ ekranına bakıp hemen değerlendirir |
-| Ctrl+Alt+M | Koç modu: Normal ↔ Yönet |
+| Ctrl+Alt+N | Koç modu: Normal ↔ Yönet |
 
 ## Geliştirme
 

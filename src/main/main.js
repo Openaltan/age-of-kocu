@@ -1300,7 +1300,7 @@ const SHORTCUTS = {
     state.cardsPinned = state.cardsVisible;
     pushState();
   },
-  'Control+Alt+M': () => {
+  'Control+Alt+N': () => {
     const s = store.updateSettings({ coachMode: commandMode() ? 'normal' : 'yonet' });
     broadcast('settings', s);
     onCoachModeChanged();

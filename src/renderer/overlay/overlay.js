@@ -107,7 +107,7 @@ function buildCoachDom(b) {
       ': ', stepSentence(b.next),
       b.nextInSec != null ? el('div', { class: 'bar' }, bar) : null,
     ) : el('div', { class: 'next', text: 'Build order bitti. Artık oyunu oku, ekonomiyi büyütmeye devam et.' }),
-    el('div', { class: 'keys', text: 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · M yönet modu · O gizle' }),
+    el('div', { class: 'keys', text: 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · N yönet modu · O gizle' }),
   );
   return { root, clock: clockEl, bar: b.nextInSec != null ? bar : null, nextIn, spanSec: null };
 }
