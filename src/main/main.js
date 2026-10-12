@@ -1382,6 +1382,55 @@ async function translateBuildUncached(build) {
   return tr;
 }
 
+// Build listesindeki açıklamaların kısa Türkçe özetleri; build kimliğine ve içeriğine göre önbelleklenir.
+const SUMMARY_FILE = () => path.join(app.getPath('userData'), 'cache', 'build-summaries-tr.json');
+let summaryCache = null;
+const summarizing = new Map();
+function summaryKey(b) {
+  return `${b.name}|${b.description || ''}|${b.steps.length}`;
+}
+async function buildSummaries(guide, ids) {
+  summaryCache ||= (() => { try { return JSON.parse(fs.readFileSync(SUMMARY_FILE(), 'utf8')); } catch { return {}; } })();
+  const builds = (await library.list(guide)).filter((b) => ids.includes(b.id) && !b.custom);
+  const result = {};
+  const missing = [];
+  for (const b of builds) {
+    const hit = summaryCache[b.id];
+    if (hit && hit.key === summaryKey(b)) result[b.id] = hit.text;
+    else missing.push(b);
+  }
+  if (missing.length && aiOn('aiTranslate')) {
+    const key = missing.map((b) => b.id).join(',');
+    if (!summarizing.has(key)) {
+      summarizing.set(key, (async () => {
+        for (let i = 0; i < missing.length; i += 12) {
+          const chunk = missing.slice(i, i + 12);
+          const items = chunk.map((b) => ({
+            id: b.id,
+            ad: b.name,
+            aciklama: (b.description || '').slice(0, 400),
+            adimlar: b.steps.slice(0, 14).map((s) => [s.time != null ? Math.round(s.time) + 'sn' : '', s.villagers ? s.villagers + ' köylü' : '', noteText(s.notes.join(' / ')).slice(0, 120)].filter(Boolean).join(' · ')),
+          }));
+          const out = await ai.summarizeBuilds(items);
+          for (const o of out) {
+            const b = chunk.find((x) => x.id === o.id);
+            const text = String(o.ozet || '').trim();
+            if (b && text) summaryCache[b.id] = { key: summaryKey(b), text: text.slice(0, 240) };
+          }
+          fs.writeFileSync(SUMMARY_FILE(), JSON.stringify(summaryCache));
+        }
+      })().finally(() => summarizing.delete(key)));
+    }
+    try {
+      await summarizing.get(key);
+    } catch (err) {
+      console.warn('build özetleri:', err.message);
+    }
+    for (const b of missing) if (summaryCache[b.id]) result[b.id] = summaryCache[b.id].text;
+  }
+  return result;
+}
+
 // ---------- Ekran okuma ----------
 // Sadece oyuncunun kendi ekranındaki HUD okunur (kaynak, köylü dağılımı, nüfus, boşta köylü).
 
@@ -1973,6 +2022,7 @@ function registerIpc() {
   });
   ipcMain.handle('civs:list', () => civs.list());
   ipcMain.handle('builds:list', (_e, guideCode, refresh) => library.list(guideCode, { refresh }));
+  ipcMain.handle('builds:summaries', (_e, guideCode, ids) => buildSummaries(guideCode, Array.isArray(ids) ? ids : []));
   ipcMain.handle('builds:select', async (_e, civSlug, buildId) => {
     store.updateSettings({ buildByCiv: { ...store.settings.buildByCiv, [civSlug]: buildId } });
     if (state.myCiv?.slug === civSlug) {

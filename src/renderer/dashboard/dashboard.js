@@ -667,7 +667,8 @@ async function loadBuildList(civ, host, refresh) {
           b.map ? el('span', { class: 'pill', text: b.map }) : null,
           buildTags(b).map((t) => el('span', { class: 'pill', text: t }))),
         el('div', { class: 'sub', text: [b.author, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
-        b.custom && b.strategy ? el('div', { class: 'desc', text: b.strategy }) : b.description ? el('div', { class: 'desc', text: b.description }) : null,
+        b.custom ? (b.strategy ? el('div', { class: 'desc', text: b.strategy }) : null)
+          : el('div', { class: 'desc', 'data-build': b.id, text: buildSummaryCache.get(b.id) || b.description || '' }),
       ),
       b.custom ? el('button', { class: 'btn', text: 'Sil', onclick: async (e) => { e.stopPropagation(); if (!confirm(`"${b.name}" silinsin mi?`)) return; await api.removeCustomBuild(b.id); loadBuildList(civ, host, false); } }) : null,
       b.id === chosen ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) :
@@ -675,7 +676,20 @@ async function loadBuildList(civ, host, refresh) {
     );
     return openBuildId === b.id ? [item, buildPreview(b)] : item;
   }).flat());
+  // Açıklamalar Türkçe kısa özetle değişir (YZ; önbellekli). Gelene kadar orijinali görünür.
+  const need = shown.filter((b) => !b.custom && !buildSummaryCache.has(b.id)).map((b) => b.id);
+  if (need.length) {
+    api.buildSummaries(civ.guide, need).then((map) => {
+      for (const [id, text] of Object.entries(map || {})) {
+        buildSummaryCache.set(id, text);
+        const node = [...host.querySelectorAll('.desc[data-build]')].find((n) => n.dataset.build === id);
+        if (node) node.textContent = text;
+      }
+    }).catch(() => {});
+  }
 }
+
+const buildSummaryCache = new Map();
 
 function buildPreview(b) {
   return el('div', { class: 'box' },

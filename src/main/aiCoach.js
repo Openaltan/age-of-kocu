@@ -92,6 +92,7 @@ const SCHEMAS = {
     tahminDegerlendirmesi: str,
     gelecekMac: str,
   }),
+  buildSummaries: obj({ ozetler: { type: 'array', items: obj({ id: str, ozet: str }) } }),
   translate: obj({ adimlar: { type: 'array', items: obj({ notlar: strArr }) } }),
   // Takıma özel ulus önerisi: havuzdaki her harita için her oyuncuya ülke ve rol.
   civAdvice: obj({
@@ -619,6 +620,20 @@ Veri:
 ${JSON.stringify(context)}`,
       }],
     });
+  }
+
+  // Build listesi için kısa Türkçe özetler (açıklaması olmayan ya da İngilizce olanlar).
+  async summarizeBuilds(items) {
+    const out = await this.ask({
+      effort: 'low',
+      schema: SCHEMAS.buildSummaries,
+      content: [{
+        type: 'text',
+        text: `Aşağıdaki Age of Empires IV build order'larının her biri için oyuncuya listede gösterilecek kısa Türkçe özet yaz (1 cümle, en fazla 160 karakter). Önce tarzı söyle (ör. "Hızlı Kale", "Erken baskı", "Ekonomik açılış", "Kule baskısı"), sonra ana fikri: hangi birimler, ne zaman çağ atlanıyor, kime karşı iyi. Açıklama yoksa adımlardan çıkar. Birim/yapı adlarını Türkçe ya da oyundaki yaygın adıyla yaz. Her id için bir özet, id'yi aynen kullan.
+${JSON.stringify(items)}`,
+      }],
+    });
+    return Array.isArray(out.ozetler) ? out.ozetler : [];
   }
 
   // Build notlarını Türkçeye çevirir; @klasör/dosya.webp@ ikon belirteçleri aynen korunur.

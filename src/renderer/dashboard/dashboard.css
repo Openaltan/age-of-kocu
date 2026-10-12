@@ -188,3 +188,4 @@ table.cmp td.wrap { white-space: normal; text-align: left; }
 .chat-msg .md code { background: var(--panel-2); padding: 1px 4px; border-radius: 3px; }
 .chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chat-suggest .btn { text-align: left; white-space: normal; }
+.build-item .desc:empty { display: none; }
