@@ -987,7 +987,7 @@ async function chatSend(text) {
   while (turns.length && turns[0].role !== 'user') turns.shift();
   turns = [...turns, { role: 'user', text: msg }];
   const res = await ai.chat(turns, chatContext());
-  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: res.sources || [], at: Date.now() });
+  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: res.sources || [], searched: res.searched !== false, at: Date.now() });
   chatHistory = log.slice(-CHAT_KEEP);
   fs.writeFileSync(userFile('chat.json'), JSON.stringify(chatHistory));
   return chatHistory;

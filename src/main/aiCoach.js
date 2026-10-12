@@ -127,7 +127,12 @@ const CHAT_SYSTEM = `Sen Age of Empires IV için profesyonel bir koçsun; Türk 
 - Güncel meta, yama notları, harita ya da build gerekiyorsa internette ara ve güncel bilgiyle cevap ver.
 - Hile önerme; oyunun kurallarına ve adil oyuna uygun kal.`;
 
-class AiError extends Error {}
+class AiError extends Error {
+  constructor(message, status = null) {
+    super(message);
+    this.status = status;
+  }
+}
 
 // ---- Sağlayıcılar: aynı arayüz, complete({ system, content, schema, effort, maxTokens, fast }) -> metin ----
 // fast: gecikmenin önemli olduğu istek (savaş anı); destekleyen sağlayıcı daha hafif modelle başlar.
@@ -247,13 +252,18 @@ class GeminiProvider {
       for (let attempt = 0; attempt < 2; attempt++) {
         if (attempt) await new Promise((r) => setTimeout(r, this.retryDelayMs));
         res = await this.post(key, { model, ...base });
+        // Arama kotası projeye bağlı: bir modelde reddedildiyse diğerlerinde de reddedilir.
+        if (res.status === 429 && base.tools) break outer;
         if (res.status === 429) break;
         if (res.status !== 503) break outer;
       }
     }
     const { data } = res;
     if (res.status === 503) throw new AiError('Google sunucuları şu an çok yoğun; biraz sonra tekrar dene');
-    if (res.status === 429) throw new AiError('Gemini ücretsiz kotası tüm modellerde doldu; yarın sıfırlanır');
+    if (res.status === 429) {
+      // Arama aracıyla gelen 429 kota değil, ücretsiz katmanda Google Arama'nın verilmemesi olabilir.
+      throw new AiError(base.tools ? 'Gemini internet araması bu anahtarda kullanılamıyor (ücretsiz katman kotası)' : 'Gemini ücretsiz kotası tüm modellerde doldu; yarın sıfırlanır', 429);
+    }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       throw new AiError(`Gemini isteği reddetti: ${data?.error?.message || res.status} (anahtarı kontrol et)`);
     }
@@ -278,17 +288,29 @@ class GeminiProvider {
 
   // Serbest metin cevap; search: gerekirse Google'da arar (güncel meta, harita, yama notları).
   // messages: [{ role: 'user' | 'assistant', text }] — konuşma tek metne dökülür.
-  async completeText({ system, messages, search = false }) {
+  // Arama reddedilirse (ücretsiz katmanda Google Arama kotası yok/az) soru aramasız tekrar sorulur
+  // ve arama 6 saat denenmez. requireSearch: aramasız cevap istenmiyor (ör. güncel meta araştırması).
+  async completeText({ system, messages, search = false, requireSearch = false }) {
     const turns = messages.map((m) => `${m.role === 'assistant' ? 'Koç' : 'Oyuncu'}: ${m.text}`);
     const text = messages.length === 1 ? messages[0].text : `Önceki konuşma:\n${turns.slice(0, -1).join('\n\n')}\n\nYeni mesaj:\n${turns[turns.length - 1]}`;
-    const data = await this.request({
-      system_instruction: system,
-      input: [{ type: 'text', text }],
-      ...(search ? { tools: [{ type: 'google_search' }] } : {}),
-    });
+    const body = { system_instruction: system, input: [{ type: 'text', text }] };
+    const useSearch = search && Date.now() >= (this.searchBlockedUntil || 0);
+    if (requireSearch && !useSearch) return null;
+    let data;
+    let searched = useSearch;
+    try {
+      data = await this.request(useSearch ? { ...body, tools: [{ type: 'google_search' }] } : body);
+    } catch (err) {
+      if (!(useSearch && err.status === 429)) throw err;
+      this.searchBlockedUntil = Date.now() + 6 * 60 * 60 * 1000;
+      console.warn('Gemini internet araması kullanılamıyor; aramasız devam ediliyor');
+      if (requireSearch) return null;
+      data = await this.request(body);
+      searched = false;
+    }
     const out = geminiText(data);
     if (!out) throw new AiError('Gemini boş yanıt döndü');
-    return { text: out, sources: geminiSources(data) };
+    return { text: out, sources: geminiSources(data), searched };
   }
 }
 
@@ -442,7 +464,7 @@ Benim ülkem: ${myCiv || 'bilinmiyor'}. Takım arkadaşlarım: ${allyCivs.join('
 3) Rakip ülkelerin bilinen güçlü zamanlamaları ve bunlara kontra.
 4) Son yamada bu ülkeleri etkileyen önemli değişiklikler (biliyorsan).
 Sadece emin olduğun bilgileri yaz.`;
-    return provider.completeText({ system: SYSTEM, messages: [{ role: 'user', text: prompt }], search: true });
+    return provider.completeText({ system: SYSTEM, messages: [{ role: 'user', text: prompt }], search: true, requireSearch: true });
   }
 
   // Oyuncunun maçlarından hatalar, oyun tarzı, ulus önerisi ve takım kompozisyonu.

@@ -984,6 +984,7 @@ async function renderChat() {
 function chatBubble(m) {
   return el('div', { class: `chat-msg ${m.role === 'assistant' ? 'coach' : 'me'}` },
     el('div', { class: 'chat-text', text: m.text }),
+    m.role === 'assistant' && m.searched === false ? el('div', { class: 'chat-src', text: 'İnternet araması kullanılamadı (ücretsiz Gemini anahtarında arama kotası yok); cevap koçun kendi bilgisinden.' }) : null,
     m.sources?.length ? el('div', { class: 'chat-src' }, 'Kaynaklar: ', m.sources.map((s, i) => [i ? ' · ' : '', el('a', { href: s.url, target: '_blank', text: s.title })])) : null,
   );
 }

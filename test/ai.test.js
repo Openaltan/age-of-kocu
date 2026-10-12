@@ -247,3 +247,25 @@ test('sohbet: oyuncu verisi ilk mesajda, geçmiş sırayla; Claude araması olma
 test('araştırma sadece Gemini ile yapılır', async () => {
   assert.strictEqual(await claudeCoach(fakeClient({})).research({ enemyCivs: [], allyCivs: [] }), null);
 });
+
+test('Gemini: internet araması reddedilirse (429) aramasız tekrar sorar ve aramayı bir süre denemez', async () => {
+  const bodies = [];
+  const f = async (url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (body.tools) return { status: 429, ok: false, json: async () => ({ error: { message: 'quota' } }) };
+    return { status: 200, ok: true, json: async () => ({ steps: [{ content: [{ type: 'text', text: 'Cevap' }] }] }) };
+  };
+  const p = new GeminiProvider({ getApiKey: () => 'g', fetchImpl: f });
+  p.retryDelayMs = 1;
+  const ai = new AiCoach({ getProvider: () => p });
+  const res = await ai.chat([{ role: 'user', text: 'meta?' }], {});
+  assert.deepStrictEqual(res, { text: 'Cevap', sources: [], searched: false });
+  assert.strictEqual(bodies.filter((b) => b.tools).length, 1); // arama kotası projeye bağlı: ilk retten sonra başka modelde denenmez
+  const before = bodies.length;
+  await ai.chat([{ role: 'user', text: 'tekrar' }], {});
+  assert.strictEqual(bodies.length, before + 1); // arama denenmedi, doğrudan aramasız
+  assert.strictEqual(bodies.at(-1).tools, undefined);
+  // Araştırma aramasız yapılmaz (eski bilgiyle "güncel meta" yazmasın).
+  assert.strictEqual(await ai.research({ enemyCivs: [], allyCivs: [] }), null);
+});
