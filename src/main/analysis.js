@@ -265,4 +265,76 @@ function summaryFor(me) {
   };
 }
 
-module.exports = { analyzeReplay, coachFindings, summaryFor, simulateVillagers, AGE_TR, ROLE_TR, mmss };
+// ---- Takıma katkı: maçta her takım arkadaşının payı, rolü ve eksikleri ----
+// Rakibin ağırlıklı birim türüne karşı hangi etiketler kontra sayılır.
+const COUNTERS = {
+  cavalry: { roles: ['anti_cavalry'], label: 'mızrakçı (atlı karşıtı)' },
+  ranged: { roles: ['cavalry', 'heavy'], label: 'atlı ya da ağır zırhlı' },
+  infantry: { roles: ['ranged', 'anti_armor'], label: 'menzilli ya da zırh delici' },
+  siege: { roles: ['cavalry'], label: 'atlı (kuşatmaya baskın)' },
+};
+const ENEMY_ROLE_TR = { cavalry: 'atlı', ranged: 'menzilli', infantry: 'piyade', siege: 'kuşatma' };
+
+function teamContribution(report, localPid) {
+  const players = report.players;
+  const me = players.find((p) => p.pid === localPid) || null;
+  const myTeam = me ? me.team : players[0]?.team;
+  const allies = players.filter((p) => p.team === myTeam);
+  const enemies = players.filter((p) => p.team !== myTeam);
+  const sum = (ps, f) => ps.reduce((s, p) => s + (f(p) || 0), 0);
+  const teamMil = sum(allies, (p) => p.military.total);
+  const teamVil = sum(allies, (p) => p.villagers.producedBy[15]);
+  const teamFeudal = avg(allies.map((p) => p.ageUps[2]));
+
+  // Rakibin ağırlığı: rakip takımın toplam ordusunda en büyük pay.
+  const enemyMil = sum(enemies, (p) => p.military.total);
+  let heavy = null;
+  for (const role of Object.keys(COUNTERS)) {
+    const n = sum(enemies, (p) => p.military.roles[role]);
+    const pay = enemyMil ? n / enemyMil : 0;
+    if (!heavy || pay > heavy.pay) heavy = { role, pay };
+  }
+  if (!heavy || heavy.pay < 0.4 || enemyMil < 15) heavy = null;
+
+  const rows = allies.map((p) => {
+    const milShare = teamMil ? p.military.total / teamMil : 0;
+    const vilShare = teamVil ? p.villagers.producedBy[15] / teamVil : 0;
+    const feudalDiff = p.ageUps[2] != null && teamFeudal != null ? Math.round(p.ageUps[2] - teamFeudal) : null;
+    const counterShare = heavy && p.military.total
+      ? Math.min(1, COUNTERS[heavy.role].roles.reduce((s, r) => s + (p.military.roles[r] || 0), 0) / p.military.total)
+      : null;
+    let role = 'Dengeli';
+    if (p.military.firstAt != null && p.military.firstAt < 6 * 60 && milShare >= 0.3) role = 'Erken baskı';
+    else if (milShare >= 0.45) role = 'Orduyu taşıyan';
+    else if (vilShare >= 0.4 && milShare < 0.25) role = 'Ekonomi';
+    else if (milShare < 0.15 && teamMil >= 30) role = 'Geride kalan ordu';
+    const eksikler = [];
+    const pct = (x) => Math.round(x * 100);
+    const mine = p === me;
+    if (teamMil >= 30 && allies.length > 1 && milShare < 0.6 / allies.length) eksikler.push(`Takımın ordusunun sadece %${pct(milShare)}'i ${mine ? 'senden' : 'ondan'} (eşit pay %${pct(1 / allies.length)})`);
+    if (heavy && counterShare != null && p.military.total >= 10 && counterShare < 0.2) {
+      eksikler.push(`Rakip ordusunun %${pct(heavy.pay)}'i ${ENEMY_ROLE_TR[heavy.role]}; ${mine ? 'senin ordunda' : 'ordusunda'} ${COUNTERS[heavy.role].label} payı %${pct(counterShare)}`);
+    }
+    if (feudalDiff != null && feudalDiff >= 60) eksikler.push(`Feodal'e takım ortalamasından ${mmss(feudalDiff)} geç`);
+    if (p.villagers.tcIdleFirst10 >= 120) eksikler.push(`Kasaba merkezi ilk 10 dakikada ${mmss(p.villagers.tcIdleFirst10)} boş`);
+    if (p.ecoTechs.length <= 1 && report.durationSec >= 15 * 60) eksikler.push(`Sadece ${p.ecoTechs.length} ekonomi teknolojisi`);
+    return {
+      pid: p.pid,
+      name: p.name,
+      civTr: p.civTr,
+      me: p === me,
+      role,
+      ekonomiPayi: pct(vilShare),
+      orduPayi: pct(milShare),
+      feodalFark: feudalDiff,
+      kontraPayi: counterShare == null ? null : pct(counterShare),
+      eksikler,
+    };
+  });
+  return {
+    rakipAgirligi: heavy ? { rol: ENEMY_ROLE_TR[heavy.role], pay: Math.round(heavy.pay * 100), kontra: COUNTERS[heavy.role].label } : null,
+    oyuncular: rows,
+  };
+}
+
+module.exports = { analyzeReplay, coachFindings, summaryFor, simulateVillagers, teamContribution, AGE_TR, ROLE_TR, mmss };

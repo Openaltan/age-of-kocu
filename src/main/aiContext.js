@@ -3,7 +3,7 @@
 // YZ koça gönderilecek bağlamı hazırlayan saf fonksiyonlar. Sadece halka açık geçmiş,
 // oyuncunun kendi ekranı/HUD'u ve biten maçların kayıtları kullanılır.
 
-const { mmss } = require('./analysis');
+const { mmss, teamContribution } = require('./analysis');
 const { noteText, AGE_NAMES } = require('./baseLedger');
 
 // Rakip defteri: bu oyuncularla daha önce oynanan maçlar ve (analiz varsa) o maçtaki oyunları.
@@ -222,6 +222,8 @@ function postgameContext({ analysis, match, matches, plan }) {
     build: analysis.buildName,
     oyuncular: report.players.map(row),
     otomatikTespitler: analysis.findings.map((f) => f.text),
+    // Takıma katkı: her takım arkadaşının ekonomi/ordu payı, rolü, rakibe karşı kontra uyumu ve eksikleri.
+    takimaKatki: teamContribution(report, analysis.localPid),
     benimGelisimim: myTrend(matches.filter((m) => m.matchId !== match?.matchId)),
     macOncesiTahminler: plan ? plan.rakipTahminleri : null,
   };

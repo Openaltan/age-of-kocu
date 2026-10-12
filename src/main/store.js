@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   aiLive: true, // maç içi periyodik YZ değerlendirmesi
   aiVision: true, // değerlendirmede ekran görüntüsü gönder
   aiLiveIntervalMin: 3,
+  liveCoach: false, // canlı koç (deneysel, YZ): kapalıyken oyun içinde sadece build başlangıcı görünür
   coachMode: 'normal', // normal: uyarı ve öneri · yonet: koç her an sıralı komut verir (oyuncu uygular)
   aiReport: true, // maç sonu YZ raporu
   aiResearch: true, // maç öncesi internetten harita/meta araştırması (Gemini + Google Arama)

@@ -52,3 +52,25 @@ test('gelişim analizi bağlamı: analizli maçlar, tüm maçlar ve meta', () =>
   assert.deepStrictEqual(c.uygulamadakiSonMaclarim[1], { sonuc: 'mağlubiyet', ulke: "Zhu Xi'nin Mirası", harita: 'Himeyama', dk: 31 });
   assert.deepStrictEqual(c.guncelMetaTakimOyunu, ['french %53.5 (seçilme %13.2)']);
 });
+
+test('takıma katkı: paylar, rol, rakibin ağırlığına karşı kontra eksikliği', () => {
+  const { teamContribution } = require('../src/main/analysis');
+  const roles = (o) => ({ cavalry: 0, ranged: 0, infantry: 0, siege: 0, heavy: 0, anti_cavalry: 0, anti_armor: 0, ...o });
+  const p = (pid, team, o) => ({ pid, name: `p${pid}`, team, civTr: 'x', ageUps: { 2: o.feudal ?? 300 }, villagers: { producedBy: { 15: o.vil ?? 30 }, tcIdleFirst10: o.idle ?? 30 }, military: { total: o.mil ?? 0, firstAt: o.first ?? 500, roles: roles(o.roles) }, ecoTechs: [1, 2, 3] });
+  const report = { durationSec: 1800, players: [
+    p(1, 0, { mil: 60, vil: 30, roles: { ranged: 60 } }),
+    p(2, 0, { mil: 10, vil: 50, feudal: 400, roles: { infantry: 10 }, idle: 150 }),
+    p(3, 1, { mil: 70, roles: { cavalry: 50, infantry: 20 } }),
+  ] };
+  const c = teamContribution(report, 1);
+  assert.deepStrictEqual(c.rakipAgirligi, { rol: 'atlı', pay: 71, kontra: 'mızrakçı (atlı karşıtı)' });
+  const [me, mate] = c.oyuncular;
+  assert.strictEqual(me.me, true);
+  assert.strictEqual(me.orduPayi, 86);
+  assert.strictEqual(me.role, 'Orduyu taşıyan');
+  assert.match(me.eksikler[0], /senin ordunda mızrakçı \(atlı karşıtı\) payı %0/);
+  assert.strictEqual(mate.role, 'Ekonomi');
+  assert.strictEqual(mate.feodalFark, 50);
+  assert.ok(mate.eksikler.some((e) => /ondan/.test(e)));
+  assert.ok(mate.eksikler.some((e) => /Kasaba merkezi/.test(e)));
+});

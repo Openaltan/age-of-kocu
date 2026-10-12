@@ -18,7 +18,7 @@ const { HudState, HudCoach, FIELDS, AREAS, fitDistribution, distributionLine } =
 const fs = require('fs');
 const { AiCoach, ClaudeProvider, GeminiProvider } = require('./aiCoach');
 const aiContext = require('./aiContext');
-const { mmss } = require('./analysis');
+const { mmss, teamContribution } = require('./analysis');
 const { MinimapWatcher, scoreboardRows, PALETTE, hueDist, hsv } = require('./minimap');
 const { LiveMonitor } = require('./liveEvents');
 const { BaseLedger, AGE_NAMES } = require('./baseLedger');
@@ -240,7 +240,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
     const result = await scout.scoutMatch(match, state.localProfileId);
     if (state.match !== match) return; // bu arada yeni maç başladıysa eski sonucu at
     state.scouting = result;
-    for (const n of enemyLabels(result)) notes.push(n.key, n.level, n.text, 240);
+    if (liveOn()) for (const n of enemyLabels(result)) notes.push(n.key, n.level, n.text, 240);
     pushNotes();
     // Analiz maç başladıktan sonra bittiyse uyarıları sonradan yükle.
     if (state.phase === 'playing') coach.alerts = buildAlerts(result);
@@ -252,7 +252,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
     });
     if (state.match !== match) return;
     pushState();
-    if (!aiOn('aiPrematch')) autoBuildByRule();
+    if (!liveOn() || !aiOn('aiPrematch')) autoBuildByRule();
     runPrematch(match);
   } catch (err) {
     state.scoutingError = err.message;
@@ -270,12 +270,15 @@ async function onMatchStarted(match, { simulated = false } = {}) {
   const build = state.build || (await loadBuildFor(match));
   coach.start(match.startedAt || Date.now(), build, state.scouting);
   startTicking();
+  // Ekran okuma (yerel OCR) build adımını köylü sayısıyla eşlemek için canlı koç kapalıyken de çalışır.
   startScreenReading();
-  startAiLive();
-  connectTeam(state.match);
-  // Kalibrasyon yoksa ekran okuma, mini harita ve kayıp algılama çalışmaz: oyuncu bilsin.
-  if (!store.settings.hudRegions?.fields) notes.push('calib', 'info', 'Ekran okuma kapalı: Ctrl+Alt+K ile kalibre et', 60);
-  else if (!store.settings.screenReadingEnabled) notes.push('calib', 'info', 'Ekran okuma ayarlardan kapalı', 30);
+  if (liveOn()) {
+    startAiLive();
+    connectTeam(state.match);
+    // Kalibrasyon yoksa ekran okuma, mini harita ve kayıp algılama çalışmaz: oyuncu bilsin.
+    if (!store.settings.hudRegions?.fields) notes.push('calib', 'info', 'Ekran okuma kapalı: Ctrl+Alt+K ile kalibre et', 60);
+    else if (!store.settings.screenReadingEnabled) notes.push('calib', 'info', 'Ekran okuma ayarlardan kapalı', 30);
+  }
   pushNotes();
   pushState();
 }
@@ -388,7 +391,15 @@ function saveApiKey(provider, key) {
   refreshAiState();
 }
 
+// Canlı koç (deneysel): maç içi YZ değerlendirmesi, yönet modu, mini harita/kayıp uyarıları, takım
+// senkronu, ulus seçme ekranı önerisi ve maç öncesi YZ planı. Kapalıyken (varsayılan) oyun içinde
+// sadece seçili build'in başlangıcı görünür; YZ ve ekran görüntüsü kullanılmaz. Kod duruyor, ayardan açılır.
+function liveOn() {
+  return store?.settings.liveCoach === true;
+}
+
 function refreshAiState() {
+  state.liveCoach = liveOn();
   state.ai.available = ai.available();
   state.ai.provider = store.settings.aiProvider || 'gemini';
   state.ai.keys = { gemini: Boolean(store.settings.geminiKeyEnc), claude: Boolean(store.settings.aiKeyEnc) };
@@ -442,7 +453,7 @@ async function gatherIntel(match) {
   const mapCivRows = map?.id ? await aoe4world.mapCivStats(kind, map.id).catch(() => []) : [];
   const meta = metaSummary({ kind, mySlug: me ? slugOf(me) : null, enemySlugs: enemies.map(slugOf), allySlugs: allies.map(slugOf), civRows, map, mapCivRows });
   let research = null;
-  if (aiOn('aiResearch')) {
+  if (liveOn() && aiOn('aiResearch')) {
     research = await cachedResearch({
       mapName: map?.en ? `${local} (${map.en})` : local,
       kind,
@@ -473,7 +484,7 @@ async function cachedResearch(q) {
 }
 
 async function runPrematch(match) {
-  if (!aiOn('aiPrematch') || !state.scouting) return;
+  if (!liveOn() || !aiOn('aiPrematch') || !state.scouting) return;
   Object.assign(state.ai, { plan: null, planStatus: 'running', planError: null, live: [] });
   pushState();
   try {
@@ -848,7 +859,7 @@ async function maybeIdentify(img) {
 
 // Ekran okumanın her karesinde (OCR'dan önce): oyuncu listesi ve mini harita.
 function onFrame(img) {
-  if (state.phase !== 'playing' || !areaRegions) return;
+  if (!liveOn() || state.phase !== 'playing' || !areaRegions) return;
   const t = coach.elapsed();
   let rows = null;
   try {
@@ -1172,7 +1183,7 @@ function squadBrief(match = null) {
 const CIV_PICK_TRIES_MS = [3000, 8000, 14000, 22000, 30000];
 
 async function onMatchFound(matchId) {
-  if (store.settings.civAdvice === false || matchInProgress()) return;
+  if (!liveOn() || store.settings.civAdvice === false || matchInProgress()) return;
   const advice = await withTimeout(syncSharedAdvice(), 4000, 'gecikti').catch(() => readUserJson('civ-advice.json', null));
   state.civSelect = { matchId, at: Date.now(), map: null, status: advice ? 'harita okunuyor' : 'öneri yok' };
   console.log(`eşleşme bulundu: ${matchId} · ulus önerisi ${advice ? 'hazır' : 'yok'}`);
@@ -1236,6 +1247,17 @@ function showCivAdvice(advice, mapName) {
   if (state.civSelect) state.civSelect.status = entry ? 'gösterildi' : 'harita bulunamadı';
   pushNotes();
   pushState();
+}
+
+// Maç analizine takıma katkı (pay, rol, kontra uyumu, eksikler) eklenir; eski analizlerde de çalışır.
+function withContribution(a) {
+  if (!a?.report) return a;
+  try {
+    return { ...a, contribution: teamContribution(a.report, a.localPid) };
+  } catch (err) {
+    console.warn('katkı hesaplanamadı:', err.message);
+    return a;
+  }
 }
 
 async function runReport(matchId) {
@@ -1306,6 +1328,7 @@ function startScreenReading() {
       coach.observeVillagers(snap.villagers);
       broadcast('hud', snap);
       const t = coach.elapsed();
+      if (!liveOn()) return; // canlı koç kapalı: okuma sadece build adımı için
       handleMonitor(monitor.observe({ t, hud: snap }));
       hudNotes = hudCoach.evaluate(snap, t, distributionTarget(), { combat: monitor.combat });
     },
@@ -1518,12 +1541,13 @@ function startTicking() {
     const elapsed = view ? view.elapsed : coach.elapsed();
     guard('notlar', () => {
       const mates = liveMates();
-      notes.setState([
+      // Canlı koç kapalıyken not yok: oyun içinde sadece build paneli görünür.
+      notes.setState(liveOn() ? [
         ...monitor.notes(),
         ...guidanceNotes(view),
         ...hudNotes,
         ...teamNotes(lastHud, mates, elapsed),
-      ]);
+      ] : []);
       pushNotes();
     });
     guard('yz', scheduleLive);
@@ -1736,7 +1760,7 @@ const SHORTCUTS = {
   'Control+Alt+Up': () => coach.adjustClock(+10),
   'Control+Alt+Down': () => coach.adjustClock(-10),
   'Control+Alt+O': () => setOverlayEnabled(!state.overlayEnabled),
-  'Control+Alt+A': () => runLive({ manual: true }),
+  'Control+Alt+A': () => (liveOn() ? runLive({ manual: true }) : flash('Canlı koç kapalı (Ayarlar)')),
   'Control+Alt+Y': () => {
     if (!team) {
       flash('Takım bağlı değil', 'danger');
@@ -1760,6 +1784,10 @@ const SHORTCUTS = {
     pushState();
   },
   'Control+Alt+N': () => {
+    if (!liveOn()) {
+      flash('Canlı koç kapalı (Ayarlar)');
+      return;
+    }
     const s = store.updateSettings({ coachMode: commandMode() ? 'normal' : 'yonet' });
     broadcast('settings', s);
     onCoachModeChanged();
@@ -1797,7 +1825,7 @@ function registerIpc() {
     const allowed = {};
     if ('overlaySide' in patch) allowed.overlaySide = patch.overlaySide === 'left' ? 'left' : 'right';
     if ('screenReadingEnabled' in patch) allowed.screenReadingEnabled = Boolean(patch.screenReadingEnabled);
-    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate', 'aiResearch', 'civAdvice']) if (k in patch) allowed[k] = Boolean(patch[k]);
+    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate', 'aiResearch', 'civAdvice', 'liveCoach']) if (k in patch) allowed[k] = Boolean(patch[k]);
     if ('aiLiveIntervalMin' in patch) allowed.aiLiveIntervalMin = Math.min(10, Math.max(1, Number(patch.aiLiveIntervalMin) || 3));
     if ('aiProvider' in patch) allowed.aiProvider = patch.aiProvider === 'claude' ? 'claude' : 'gemini';
     if ('overlayMode' in patch) allowed.overlayMode = patch.overlayMode === 'detailed' ? 'detailed' : 'simple';
@@ -1811,6 +1839,7 @@ function registerIpc() {
     if ('overlayEnabled' in patch) setOverlayEnabled(Boolean(patch.overlayEnabled));
     if ('aiProvider' in allowed) refreshAiState();
     if ('coachMode' in allowed) onCoachModeChanged();
+    if ('liveCoach' in allowed) refreshAiState();
     broadcast('settings', s);
     pushState();
     return s;
@@ -1839,7 +1868,7 @@ function registerIpc() {
   ipcMain.handle('players:search', (_e, q) => aoe4world.searchPlayers(q));
   ipcMain.handle('players:scout', (_e, profileId, name) =>
     scout.scoutPlayer({ profileId: Number(profileId), name, team: null, civCode: null }, 'rm_3v3'));
-  ipcMain.handle('analysis:get', (_e, matchId) => postgame.load(Number(matchId)));
+  ipcMain.handle('analysis:get', (_e, matchId) => withContribution(postgame.load(Number(matchId))));
   ipcMain.handle('analysis:import', async () => {
     const res = await dialog.showOpenDialog(dashboardWin, {
       title: 'Kayıt dosyası seç',
@@ -1849,7 +1878,7 @@ function registerIpc() {
     });
     if (res.canceled || !res.filePaths[0]) return null;
     const localName = myPlayer(state.match)?.name || store.matches.flatMap((m) => m.players).find((p) => p.profileId === state.localProfileId)?.name;
-    return postgame.analyzeFile(res.filePaths[0], { localName });
+    return withContribution(await postgame.analyzeFile(res.filePaths[0], { localName }));
   });
   ipcMain.handle('calib:get', () => {
     const file = calibrationPath();
@@ -1990,7 +2019,7 @@ if (!app.requestSingleInstanceLock()) {
     store = new Store(app.getPath('userData'));
     const s = store.settings;
     console.log(`başladı: sürüm ${app.getVersion()}${app.isPackaged ? '' : ' (geliştirme)'} · veri: ${app.getPath('userData')} · günlük: ${logFile}`);
-    console.log(`ayarlar: sağlayıcı=${s.aiProvider} geminiAnahtarı=${Boolean(s.geminiKeyEnc)} claudeAnahtarı=${Boolean(s.aiKeyEnc)} kalibrasyon=${Boolean(s.hudRegions?.fields)} ekranOkuma=${s.screenReadingEnabled} mod=${s.coachMode} build=${JSON.stringify(s.buildByCiv)}`);
+    console.log(`ayarlar: sağlayıcı=${s.aiProvider} geminiAnahtarı=${Boolean(s.geminiKeyEnc)} claudeAnahtarı=${Boolean(s.aiKeyEnc)} kalibrasyon=${Boolean(s.hudRegions?.fields)} ekranOkuma=${s.screenReadingEnabled} canlıKoç=${s.liveCoach === true} mod=${s.coachMode} build=${JSON.stringify(s.buildByCiv)}`);
     library = new BuildLibrary(path.join(app.getPath('userData'), 'cache'));
     screenReader = new ScreenReader(path.join(app.getPath('userData'), 'ocr'));
     for (const [code, slug] of Object.entries(store.settings.learnedCivCodes)) civs.learnLogCode(code, slug);

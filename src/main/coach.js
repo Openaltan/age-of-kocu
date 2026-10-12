@@ -4,6 +4,7 @@
 // build adımlarını bu tahminle ilerletiyoruz.
 const VILLAGER_TRAIN_SEC = 20;
 const DEFAULT_START_VILLAGERS = 6;
+const FINISH_AFTER_SEC = 60;
 
 // Her adım için "ne zaman gelmeli" saniyesini hesaplar. Süresi yazılı adım süreyi,
 // sadece köylü hedefi olan adım üretim tahminini kullanır; ikisi de yoksa öncekini devralır.
@@ -50,6 +51,7 @@ class BuildRunner {
   // Oyuncu son 20 saniyede elle kaydırdıysa ona dokunmaz.
   syncVillagers(villagers, elapsedSec) {
     if (!this.build || villagers == null) return;
+    this.lastVillagers = villagers;
     if (this.manualAtSec != null && elapsedSec - this.manualAtSec < 20) return;
     let target = 0;
     this.build.steps.forEach((s, i) => {
@@ -78,7 +80,20 @@ class BuildRunner {
       nextAtVillagers: this.synced ? steps[i + 1]?.villagers ?? null : null,
       synced: Boolean(this.synced),
       manual: this.offset !== 0 && !this.synced,
+      // Bu adımın bitmesi gereken maç saniyesi ("2:10'a kadar"); saatle ilerlerken bilinir.
+      untilAt: nextAt != null && this.offset === 0 && !this.synced ? nextAt : null,
+      finished: this.finished(i, elapsedSec),
     };
+  }
+
+  // Başlangıç bitti mi: son adımdayken ya ekrandan okunan köylü sayısı son adımı 2 geçti ya da
+  // son adımın üzerinden 60 sn geçti. Bitince oyun içi panel kendini gizler.
+  finished(i, elapsedSec) {
+    const steps = this.build?.steps || [];
+    if (!steps.length || i < steps.length - 1) return false;
+    const last = steps[steps.length - 1];
+    if (last.villagers != null && this.lastVillagers != null && this.lastVillagers >= last.villagers + 2) return true;
+    return elapsedSec - this.triggers[steps.length - 1] >= FINISH_AFTER_SEC;
   }
 }
 

@@ -26,7 +26,7 @@ html, body { background: transparent; overflow: hidden; height: 100%; user-selec
 #coach .top .clock { color: var(--gold); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 #coach .build-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
 #coach .say { font-size: 17px; font-weight: 650; margin: 8px 0 6px; line-height: 1.3; }
-#coach .notes { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+#coach .step-notes { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
 #coach .next { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
 #coach .next b { color: var(--text); font-weight: 600; }
 #coach .bar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
@@ -91,3 +91,9 @@ html, body { background: transparent; overflow: hidden; height: 100%; user-selec
 .flash { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); padding: 8px 18px; border-radius: 6px; font-size: 16px; font-weight: 700; background: rgba(12, 18, 26, 0.92); border: 1px solid var(--gold); color: var(--text); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5); }
 .flash.lvl-danger { border-color: var(--danger); }
 .flash[hidden] { display: none; }
+
+/* ---- Sadece build (canlı koç kapalı): diğer paneller ve notlar gizli ---- */
+body.build-only #hud, body.build-only #ai, body.build-only #alerts, body.build-only #cards, body.build-only #notes { display: none; }
+#coach .until { font-size: 12.5px; color: var(--gold); margin: -2px 0 6px; font-variant-numeric: tabular-nums; }
+#coach .finished { border-color: var(--chance); }
+#coach .finished .say { color: var(--chance); }

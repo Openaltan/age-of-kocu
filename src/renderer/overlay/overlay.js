@@ -8,7 +8,11 @@ const $hud = document.getElementById('hud');
 const $ai = document.getElementById('ai');
 const $notes = document.getElementById('notes');
 let mode = 'simple';
+let overlayMode = 'simple'; // ayardaki görünüm
 let noteList = [];
+// Başlangıç bitince panel kısa bir "bitti" mesajından sonra bu maç için gizlenir.
+let finishedAt = null;
+const FINISH_SHOW_MS = 12000;
 
 const ALERT_MS = 15000;
 let state = null;
@@ -19,10 +23,17 @@ function applySide(side) {
   $column.className = `column ${side === 'left' ? 'left' : 'right'}`;
 }
 
-// Sade mod: sol üstte sadece "ne eksik / ne risk" notları; diğer paneller gizli.
-function applyMode(m) {
-  mode = m === 'detailed' ? 'detailed' : 'simple';
+// Canlı koç kapalıyken (varsayılan) oyun içinde sadece build paneli: başlangıç adımları.
+function buildOnly() {
+  return Boolean(state) && !state.liveCoach;
+}
+
+// Sade mod: sol üstte sadece "ne eksik / ne risk" notları; detaylı: paneller; build: sadece build paneli.
+function applyMode(m = overlayMode) {
+  overlayMode = m === 'detailed' ? 'detailed' : 'simple';
+  mode = buildOnly() ? 'build' : overlayMode;
   $column.hidden = mode === 'simple';
+  document.body.classList.toggle('build-only', mode === 'build');
   renderNotes();
 }
 
@@ -58,9 +69,22 @@ function renderCoach(view) {
   $coach.hidden = !playing;
   if (!playing) {
     coachKey = null;
+    finishedAt = null;
     return;
   }
   const b = view.build;
+  // Başlangıç bitti: önce kısa mesaj, sonra panel çekilir (oyuna karışmaz).
+  if (mode === 'build' && b?.finished) {
+    if (finishedAt == null) {
+      finishedAt = Date.now();
+      coachKey = 'finished';
+      fill($coach, el('div', { class: 'panel finished' },
+        el('div', { class: 'say', text: 'Başlangıç bitti ✓' }),
+        el('p', { class: 'empty', text: `${b.name} tamamlandı. Buradan sonrası senin; maç sonunda analizine bak.` })));
+    }
+    $coach.hidden = Date.now() - finishedAt > FINISH_SHOW_MS;
+    return;
+  }
   const key = b ? `${b.name}|${b.index}|${b.manual}` : 'none';
   if (key !== coachKey) {
     coachKey = key;
@@ -98,8 +122,9 @@ function buildCoachDom(b) {
       clockEl,
     ),
     el('div', { class: 'say', text: stepSentence(s) }),
+    b.untilAt != null ? el('div', { class: 'until', text: `Hedef: ${clock(b.untilAt)}` }) : null,
     resourceRow(s, { compact: true }),
-    s.notes.length ? el('div', { class: 'notes' }, s.notes.map(note)) : null,
+    s.notes.length ? el('div', { class: 'step-notes' }, s.notes.map(note)) : null,
     b.next ? el('div', { class: 'next' },
       b.manual ? el('span', { class: 'manual', text: 'Elle ayarlandı · ' }) : null,
       'Sonraki',
@@ -108,7 +133,7 @@ function buildCoachDom(b) {
       ': ', stepSentence(b.next),
       b.nextInSec != null ? el('div', { class: 'bar' }, bar) : null,
     ) : el('div', { class: 'next', text: 'Build order bitti. Artık oyunu oku, ekonomiyi büyütmeye devam et.' }),
-    el('div', { class: 'keys', text: 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · N yönet modu · O gizle' }),
+    el('div', { class: 'keys', text: mode === 'build' ? 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · O gizle' : 'Ctrl+Alt+→/← adım · ↑/↓ saat ±10 sn · R rakipler · N yönet modu · O gizle' }),
   );
   return { root, clock: clockEl, bar: b.nextInSec != null ? bar : null, nextIn, spanSec: null };
 }
@@ -171,6 +196,7 @@ function showAlert(a) {
 
 window.kocu.on('state', (s) => {
   state = s;
+  applyMode();
   if (s.phase !== 'playing') renderCoach(null);
   renderCards();
   renderAi();

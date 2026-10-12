@@ -110,3 +110,17 @@ test('serbest build: YZ adımları koç biçimine çevrilir, köylü sayısı da
   // Koç bu build'i normal build gibi adım adım yürütür.
   assert.deepStrictEqual(stepTriggers(b.steps), [0, 130]);
 });
+
+test('başlangıç: adımın bitiş zamanı ve son adımdan sonra "bitti"', () => {
+  const build = { name: 'b', steps: [{ villagers: 6, time: 0, notes: [] }, { villagers: 9, time: 60, notes: [] }, { villagers: 12, time: 120, notes: [] }] };
+  const r = new BuildRunner(build);
+  assert.strictEqual(r.view(30).untilAt, 60);
+  assert.strictEqual(r.view(30).finished, false);
+  assert.strictEqual(r.view(130).index, 2);
+  assert.strictEqual(r.view(130).finished, false);
+  assert.strictEqual(r.view(181).finished, true); // son adımdan 60 sn sonra
+  // Ekran okuma: köylü sayısı son adımı 2 geçince hemen biter.
+  const r2 = new BuildRunner(build);
+  r2.syncVillagers(14, 125);
+  assert.strictEqual(r2.view(126).finished, true);
+});

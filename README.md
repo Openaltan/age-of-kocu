@@ -2,6 +2,11 @@
 
 Age of Empires IV için Türkçe maç koçu.
 
+**Odak: analiz ve öğrenme.** Oyun içinde sadece seçtiğin build'in başlangıcı görünür; asıl iş maç sonunda: hataların, eksiklerin, maça ve takıma katkın.
+
+- **Oyun içi build paneli:** Build Order'dan güncel sezonun hazır başlangıçlarından birini seç; maçta panel adım adım ne yapacağını, köylü dağılımını ve hedef süreyi gösterir. Başlangıç bitince (son adımdan 60 sn sonra ya da ekran okuma açıksa köylü sayın son adımı geçince) "Başlangıç bitti" deyip çekilir. YZ ve ekran görüntüsü kullanılmaz.
+- **Takıma katkı (Maç Analizi):** Her takım arkadaşının ekonomi ve ordu payı, rolü (orduyu taşıyan, ekonomi, erken baskı), Feodal'e takıma göre ne zaman geçtiği, rakibin ağırlıklı birimine karşı kontra payı ve eksikleri.
+- **Canlı koç (deneysel, varsayılan kapalı):** Maç içi YZ uyarıları, yönet modu, mini harita/kayıp algılama, ulus seçme ekranı önerisi. Ücretsiz Gemini kotasıyla güvenilir çalışmadığı için kapalı; Ayarlar › Yapay Zekâ Koç › Canlı koç ile açılır. Aşağıdaki maç içi özellikler sadece açıkken çalışır.
 - **Maç öncesi:** Yükleme ekranında rakiplerin AoE4World'deki halka açık geçmişinden oyun tarzı çıkarılır: favori ülke, erken baskıcı mı, uzun maçta zayıf mı, form durumu.
 - **Maç içi:** Ülkene göre seçtiğin build order adım adım, sayılarla okunur ("11 köylü: 7 yemek, 2 odun, 2 altın"). Rakip analizine göre zamanlı uyarılar gelir.
 - **Ekran okuma:** Maç sırasında saniyede bir kendi ekranındaki kaynaklar, köylü dağılımı, nüfus ve boştaki köylüler okunur (OCR, internetsiz). "Oduna 3 köylü daha", "Ev kur: nüfus 19/20", "2 köylü boşta", "Köylü üretimi durdu" gibi anlık uyarılar gelir; build adımı gerçek köylü sayısına göre ilerler.

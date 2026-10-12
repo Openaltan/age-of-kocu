@@ -141,6 +141,11 @@ function intelBox(intel) {
 // Kalibrasyon yoksa kaynak/köylü okuma, mini harita ve kayıp algılama hiç çalışmaz.
 function calibrationWarning() {
   if (settings?.hudRegions?.fields && settings.screenReadingEnabled !== false) return null;
+  // Canlı koç kapalıyken kalibrasyon isteğe bağlı: sadece build adımlarını köylü sayınla eşler.
+  if (!state?.liveCoach) {
+    return el('p', { class: 'muted' }, 'İsteğe bağlı: ekran okumayı kalibre edersen build adımları saatle değil gerçek köylü sayınla ilerler ve başlangıcın bittiği daha doğru anlaşılır. ',
+      el('button', { class: 'btn', text: 'Ekran Okuma', onclick: () => show('screen') }));
+  }
   return el('div', { class: 'box' },
     el('p', { class: 'res-loss', text: settings?.hudRegions?.fields ? 'Ekran okuma ayarlardan kapalı.' : 'Ekran okuma kalibre edilmemiş: koç kaynaklarını, köylülerini ve mini haritayı göremiyor; sadece birkaç dakikada bir ekran görüntüsüne bakıyor.' }),
     el('button', { class: 'btn primary', text: 'Ekran Okuma ayarına git', onclick: () => show('screen') }),
@@ -264,7 +269,8 @@ function analysisBody(a, m) {
       a.source ? el('span', { class: 'pill', text: a.source }) : null,
       a.buildName ? el('span', { class: 'pill gold', text: `Build: ${a.buildName}` }) : null,
     ),
-    el('h2', { text: 'Koçun tespitleri' }),
+    contributionSection(a.contribution),
+    el('h2', { text: 'Eksiklerin ve hataların' }),
     me ? el('div', { class: 'box findings' }, a.findings.length ? insightList(a.findings) : el('p', { class: 'muted', text: 'Belirgin bir sorun bulunmadı.' }))
       : el('div', { class: 'box' }, el('p', { class: 'muted', text: 'Bu kayıtta seni bulamadım; tablo tüm oyuncuları gösteriyor.' })),
     aiReportSection(a, m),
@@ -278,6 +284,32 @@ function analysisBody(a, m) {
     el('p', { class: 'muted', text: 'Köylü sayıları üretim komutlarından tahmin edilir; ölen köylüler kayıtta görünmez.' }),
     el('h2', { text: 'Ordular' }),
     el('div', { class: 'armies' }, [...allies, ...enemies].map(armyBox)),
+  ];
+}
+
+// Takıma katkı: maçta kim ne kadar ekonomi/ordu taşıdı, rolü, rakibe karşı kontra uyumu ve eksikleri.
+function contributionSection(c) {
+  if (!c?.oyuncular?.length) return null;
+  const pct = (v) => (v == null ? '–' : `%${v}`);
+  const diff = (s) => (s == null ? '–' : s === 0 ? 'ortalama' : `${s > 0 ? '+' : '−'}${clock(Math.abs(s))}`);
+  return [
+    el('h2', { text: 'Takıma katkı' }),
+    el('div', { class: 'box cmp-wrap' },
+      c.rakipAgirligi ? el('p', {}, el('b', { text: 'Rakibin ağırlığı: ' }), `ordusunun %${c.rakipAgirligi.pay}'i ${c.rakipAgirligi.rol}; kontrası ${c.rakipAgirligi.kontra}.`) : null,
+      el('table', { class: 'cmp' },
+        el('tr', {}, ['Oyuncu', 'Rol', 'Ekonomi payı (15. dk köylü)', 'Ordu payı', "Feodal (takıma göre)", 'Kontra payı', 'Eksikler'].map((h) => el('th', { text: h }))),
+        c.oyuncular.map((p) => el('tr', { class: p.me ? 'me' : '' },
+          el('td', {}, el('b', { text: p.name }), el('div', { class: 'muted', text: p.civTr })),
+          el('td', { text: p.role }),
+          el('td', { text: pct(p.ekonomiPayi) }),
+          el('td', { text: pct(p.orduPayi) }),
+          el('td', {}, el('span', { class: p.feodalFark >= 60 ? 'bad' : '', text: diff(p.feodalFark) })),
+          el('td', {}, el('span', { class: p.kontraPayi != null && p.kontraPayi < 20 ? 'bad' : '', text: pct(p.kontraPayi) })),
+          el('td', { class: 'wrap' }, p.eksikler.length ? el('ul', {}, p.eksikler.map((e) => el('li', { text: e }))) : el('span', { class: 'muted', text: 'Belirgin eksik yok' })),
+        )),
+      ),
+      el('p', { class: 'muted', text: 'Paylar takımın toplamına göre (köylü: 15. dakikaya kadar üretilen; ordu: maç boyu basılan asker). Kontra payı: rakibin ağırlıklı birimine karşı etkili birimlerin ordudaki oranı.' }),
+    ),
   ];
 }
 
@@ -385,6 +417,12 @@ const KOMUT_TR = { ekonomi: 'Ekonomi', insaat: 'İnşaat', uretim: 'Üretim', ar
 
 function aiLiveSection(s) {
   const a = s.ai;
+  if (!s.liveCoach) {
+    return el('div', { class: 'box' },
+      el('p', {}, el('b', { text: 'Oyun içinde sadece build başlangıcı görünür. ' }), 'Panel adım adım ne yapacağını ve hedef süresini gösterir; başlangıç bitince çekilir. Maç bitince kayıt incelenir: hatalar, eksikler ve takıma katkın Maç Analizi\'nde.'),
+      el('p', { class: 'muted', text: 'Canlı koç (YZ ile maç içi uyarılar) deneysel ve kapalı; Ayarlar › Canlı koç bölümünden açılabilir.' }),
+    );
+  }
   if (!a?.available) {
     return el('div', { class: 'box' }, el('p', { class: 'muted', text: 'Yapay zekâ koç kapalı. Ayarlar › Yapay Zekâ Koç bölümünden ücretsiz Gemini anahtarını gir.' }));
   }
@@ -488,8 +526,9 @@ function aiSettingsSection() {
   const hasKey = Boolean(state.ai?.keys?.[prov]);
   const keyInput = el('input', { type: 'password', placeholder: hasKey ? 'Anahtar kayıtlı (değiştirmek için yenisini yaz)' : 'API anahtarı', autocomplete: 'off' });
   const msg = el('span', { class: 'muted' });
-  const toggle = (key, label) => el('label', { class: 'check' },
-    el('input', { type: 'checkbox', checked: settings[key] !== false, onchange: async (e) => { settings = await api.updateSettings({ [key]: e.target.checked }); } }), label);
+  // defaultOn: ayar hiç kaydedilmemişse açık mı sayılır (canlı koç varsayılan kapalı).
+  const toggle = (key, label, defaultOn = true) => el('label', { class: 'check' },
+    el('input', { type: 'checkbox', checked: defaultOn ? settings[key] !== false : settings[key] === true, onchange: async (e) => { settings = await api.updateSettings({ [key]: e.target.checked }); } }), label);
   return [
     el('h2', { text: 'Yapay Zekâ Koç' }),
     el('div', { class: 'box' },
@@ -509,7 +548,10 @@ function aiSettingsSection() {
         el('button', { class: 'btn', text: 'Anahtarı sil', onclick: async () => { await api.setAiKey(prov, ''); msg.textContent = 'Silindi.'; } }),
         msg,
       ),
-      toggle('aiPrematch', 'Maç öncesi oyun planı ve rakip tahminleri'),
+      el('h3', { text: 'Canlı koç (deneysel)' }),
+      el('p', { class: 'muted', text: 'Açıkken maç içinde YZ ekranına bakıp uyarı ve komut verir (yönet modu, mini harita, kayıp algılama, ulus seçme ekranı önerisi, maç öncesi YZ planı). Ücretsiz Gemini kotasıyla güvenilir çalışmadığı için kapalı; kapalıyken oyun içinde sadece build başlangıcı görünür. Sohbet, gelişim analizi, ulus önerisi tablosu ve maç sonu rapor bu ayardan bağımsız çalışır.' }),
+      toggle('liveCoach', 'Canlı koçu aç (deneysel)', false),
+      toggle('aiPrematch', 'Maç öncesi oyun planı ve rakip tahminleri (canlı koç açıkken)'),
       toggle('aiLive', 'Maç içi otomatik değerlendirme'),
       toggle('aiVision', 'Değerlendirmede ekran görüntüsünü gönder (koç ekranını görsün)'),
       toggle('aiReport', 'Maç sonu koç raporu'),
@@ -538,13 +580,15 @@ async function renderBuilds() {
   const list = el('div', { class: 'builds' }, el('p', { class: 'muted', text: 'Yükleniyor…' }));
   fill(v, 
     el('h1', { text: 'Build Order' }),
-    el('p', { class: 'lead', text: 'Koç, maçta ülkene göre seçtiğin build\'i adım adım okutur. Build\'ler aoe4guides.com topluluğundan, puana göre sıralı gelir.' }),
+    el('p', { class: 'lead', text: 'Ülkene göre bir başlangıç seç; maçta oyunun üstünde adım adım ne yapacağını ve hedef süresini gösterir, başlangıç bitince çekilir. Video izleyip akılda tutmaya gerek yok. Build\'ler aoe4guides.com topluluğundan, puana göre sıralı; varsayılan olarak sadece güncel sezonun build\'leri listelenir.' }),
     el('div', { class: 'row' }, select, el('button', { class: 'btn', text: 'Yenile', onclick: () => loadBuildList(civ, list, true) })),
     el('h2', { text: `${civ.tr} build'leri` }),
     list,
   );
   loadBuildList(civ, list, false);
 }
+
+let showOldSeasons = false;
 
 async function loadBuildList(civ, host, refresh) {
   let builds;
@@ -564,15 +608,30 @@ async function loadBuildList(civ, host, refresh) {
     el('div', {}, el('div', { class: 'name', text: name }), el('div', { class: 'sub', text: sub })),
     chosen === id ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) : el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, id) }),
   );
-  const auto = special('auto', 'Otomatik (hazırlardan rakibe göre)',
-    'Yükleme ekranında koç her rakibin ülkesine, o ülkeyle tecrübesine, oyun tarzına (erken mi bitirir, uzun maçta mı güçlü) ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına bakıp aşağıdaki hazır build\'lerden birini seçer. YZ yoksa: erken baskıcıya karşı savunmalı açılış. Seçimi ve nedenini Canlı Maç sayfasında görürsün.');
-  const free = special('serbest', 'Serbest (koç özel build yazar)',
-    'Hazır build kullanılmaz: koç bu maçın rakiplerine göre tamamen özel bir açılış (adım adım köylü dağılımı, binalar, simge yapı, çağ atlama) ve maç boyu oyun stili yazar; canlı koç da bu stile göre yönetir. Yükleme ekranında YZ gerekir; yazılamazsa otomatik seçime düşer.');
-  fill(host, auto, free, ...builds.map((b) => {
+  const live = Boolean(state?.liveCoach);
+  const auto = special('auto', live ? 'Otomatik (hazırlardan rakibe göre)' : 'Otomatik (rakibe göre, kurallı)',
+    live
+      ? 'Yükleme ekranında koç her rakibin ülkesine, o ülkeyle tecrübesine, oyun tarzına (erken mi bitirir, uzun maçta mı güçlü) ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına bakıp aşağıdaki hazır build\'lerden birini seçer. Seçimi ve nedenini Canlı Maç sayfasında görürsün.'
+      : 'Yükleme ekranında rakiplerin geçmişine bakılır: erken baskıcı rakip varsa savunmalı, rakipler uzun maçta zayıfsa ekonomik açılış; yoksa en yüksek puanlı güncel build. YZ kullanılmaz.');
+  // Serbest (YZ'nin özel build yazması) sadece canlı koç açıkken.
+  const free = live ? special('serbest', 'Serbest (koç özel build yazar)',
+    'Hazır build kullanılmaz: koç bu maçın rakiplerine göre tamamen özel bir açılış (adım adım köylü dağılımı, binalar, simge yapı, çağ atlama) ve maç boyu oyun stili yazar. Yükleme ekranında YZ gerekir; yazılamazsa otomatik seçime düşer.') : null;
+  // Güncel sezon (listedeki en yeni ve bir önceki): eski sezonlar meta dışı kalmış olabilir.
+  const seasonOf = (b) => Number(/(\d+)/.exec(String(b.season || ''))?.[1]) || null;
+  const latest = Math.max(0, ...builds.map(seasonOf).filter(Boolean));
+  const isCurrent = (b) => !latest || seasonOf(b) == null || seasonOf(b) >= latest - 1;
+  const old = builds.filter((b) => !isCurrent(b));
+  const shown = showOldSeasons ? builds : builds.filter((b) => isCurrent(b) || b.id === chosen);
+  const toggleOld = old.length ? el('label', { class: 'check' },
+    el('input', { type: 'checkbox', checked: showOldSeasons, onchange: (e) => { showOldSeasons = e.target.checked; loadBuildList(civ, host, false); } }),
+    `Eski sezonların build'lerini de göster (${old.length})`) : null;
+  fill(host, toggleOld, auto, free, ...shown.map((b) => {
     const item = el('div', { class: `build-item ${openBuildId === b.id ? 'open' : ''}`, onclick: () => { openBuildId = openBuildId === b.id ? null : b.id; loadBuildList(civ, host, false); } },
       el('div', {},
-        el('div', { class: 'name', text: b.name }),
-        el('div', { class: 'sub', text: [b.author, b.strategy, b.season, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
+        el('div', { class: 'name' }, b.name, ' ',
+          b.season ? el('span', { class: `pill ${isCurrent(b) ? 'gold' : ''}`, text: isCurrent(b) ? b.season : `${b.season} · eski` }) : null,
+          b.map ? el('span', { class: 'pill', text: b.map }) : null),
+        el('div', { class: 'sub', text: [b.author, b.strategy, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
       ),
       b.id === chosen ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) :
         el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, b.id) }),
@@ -1049,8 +1108,10 @@ const RENDER = { live: renderLive, analysis: renderAnalysis, builds: renderBuild
 // ---------- Olaylar ----------
 api.on('state', (s) => {
   const analysisChanged = JSON.stringify(state?.analysis) !== JSON.stringify(s.analysis);
+  const liveChanged = state?.liveCoach !== s.liveCoach;
   state = s;
   renderStatus();
+  if (liveChanged) renderModeSwitch();
   if (current === 'live') renderLive();
   if (current === 'analysis' && analysisChanged) renderAnalysis();
 });
@@ -1076,6 +1137,11 @@ api.on('calibration', (img) => { if (current === 'screen') onCalibrationImage(im
 
 // Sağ üstteki koç modu anahtarı: Normal (uyarı/öneri) · Yönet (koç sıralı komut verir).
 function renderModeSwitch() {
+  // Normal/Yönet sadece canlı koç açıkken anlamlı.
+  if (!state?.liveCoach) {
+    fill(document.getElementById('mode-switch'));
+    return;
+  }
   const mode = settings?.coachMode === 'yonet' ? 'yonet' : 'normal';
   const btn = (key, label, title) => el('button', {
     class: `${mode === key ? 'on' : ''} ${key}`,
