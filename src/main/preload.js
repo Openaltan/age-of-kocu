@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('kocu', {
   listCivs: () => ipcRenderer.invoke('civs:list'),
   listBuilds: (guideCode, refresh = false) => ipcRenderer.invoke('builds:list', guideCode, refresh),
   buildSummaries: (guideCode, ids) => ipcRenderer.invoke('builds:summaries', guideCode, ids),
+  translateBuild: (guideCode, buildId) => ipcRenderer.invoke('builds:translate', guideCode, buildId),
   selectBuild: (civSlug, buildId) => ipcRenderer.invoke('builds:select', civSlug, buildId),
   searchPlayers: (q) => ipcRenderer.invoke('players:search', q),
   scoutPlayer: (profileId, name) => ipcRenderer.invoke('players:scout', profileId, name),

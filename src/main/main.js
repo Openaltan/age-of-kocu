@@ -2022,6 +2022,17 @@ function registerIpc() {
   });
   ipcMain.handle('civs:list', () => civs.list());
   ipcMain.handle('builds:list', (_e, guideCode, refresh) => library.list(guideCode, { refresh }));
+  // Önizleme ve seçimde notlar önceden Türkçeleştirilir; maçta panel baştan Türkçe açılır.
+  ipcMain.handle('builds:translate', async (_e, guideCode, buildId) => {
+    const b = await library.get(guideCode, buildId);
+    if (!b) return null;
+    try {
+      return await translateBuild(b);
+    } catch (err) {
+      console.warn('çeviri:', err.message);
+      return b;
+    }
+  });
   ipcMain.handle('builds:summaries', (_e, guideCode, ids) => buildSummaries(guideCode, Array.isArray(ids) ? ids : []));
   ipcMain.handle('builds:select', async (_e, civSlug, buildId) => {
     store.updateSettings({ buildByCiv: { ...store.settings.buildByCiv, [civSlug]: buildId } });

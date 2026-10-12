@@ -636,7 +636,12 @@ async function loadBuildList(civ, host, refresh) {
     fill(host, el('p', { class: 'muted', text: 'Bu ülke için build bulunamadı.' }));
     return;
   }
-  const select = async (e, id) => { e.stopPropagation(); settings.buildByCiv = await api.selectBuild(civ.slug, id); loadBuildList(civ, host, false); };
+  const select = async (e, id) => {
+    e.stopPropagation();
+    settings.buildByCiv = await api.selectBuild(civ.slug, id);
+    if (id !== 'auto' && id !== 'serbest') api.translateBuild(civ.guide, id).catch(() => {});
+    loadBuildList(civ, host, false);
+  };
   const special = (id, name, sub) => el('div', { class: 'build-item' },
     el('div', {}, el('div', { class: 'name', text: name }), el('div', { class: 'sub', text: sub })),
     chosen === id ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) : el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, id) }),
@@ -674,7 +679,7 @@ async function loadBuildList(civ, host, refresh) {
       b.id === chosen ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) :
         el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, b.id) }),
     );
-    return openBuildId === b.id ? [item, buildPreview(b)] : item;
+    return openBuildId === b.id ? [item, buildPreview(b, civ.guide)] : item;
   }).flat());
   // Açıklamalar Türkçe kısa özetle değişir (YZ; önbellekli). Gelene kadar orijinali görünür.
   const need = shown.filter((b) => !b.custom && !buildSummaryCache.has(b.id)).map((b) => b.id);
@@ -691,7 +696,21 @@ async function loadBuildList(civ, host, refresh) {
 
 const buildSummaryCache = new Map();
 
-function buildPreview(b) {
+function buildPreview(b, guide) {
+  const box = buildPreviewBox(translatedBuilds.get(b.id) || b);
+  if (!b.custom && !translatedBuilds.has(b.id) && guide) {
+    api.translateBuild(guide, b.id).then((tr) => {
+      if (!tr?.translated) return;
+      translatedBuilds.set(b.id, tr);
+      if (box.isConnected) box.replaceWith(buildPreviewBox(tr));
+    }).catch(() => {});
+  }
+  return box;
+}
+
+const translatedBuilds = new Map();
+
+function buildPreviewBox(b) {
   return el('div', { class: 'box' },
     el('table', { class: 'steps' },
       el('tr', {}, el('th', { text: 'Süre' }), el('th', { text: 'Köylü' }), el('th', { text: 'Dağılım' }), el('th', { text: 'Notlar' })),
