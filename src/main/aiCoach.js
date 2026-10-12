@@ -105,6 +105,8 @@ const SCHEMAS = {
       }),
     },
   }),
+  // Uygulamayla bağlantılı sohbet: cevap + eylem (ozelBuild şeması aşağıda SCHEMAS.ozelBuild ile aynı).
+  chat: null,
   // Ulus seçme ekranında görünen harita.
   mapPick: obj({ harita: str, ekrandakiAd: str }),
   // Oyuncunun maçlarından gelişim analizi ve ulus önerisi.
@@ -126,6 +128,17 @@ const CHAT_SYSTEM = `Sen Age of Empires IV için profesyonel bir koçsun; Türk 
 - Sana verilen oyuncu verisine (maç geçmişi, analizler, gelişim raporu, şu anki maç) dayan; veri yoksa bunu söyle, uydurma.
 - Güncel meta, yama notları, harita ya da build gerekiyorsa internette ara ve güncel bilgiyle cevap ver.
 - Hile önerme; oyunun kurallarına ve adil oyuna uygun kal.`;
+
+SCHEMAS.chat = obj({
+  cevap: str,
+  eylem: obj({
+    tur: { type: 'string', enum: ['yok', 'build_sec', 'ozel_build'] },
+    ulkeKodu: str,
+    buildId: str,
+    gerekce: str,
+    ozelBuild: SCHEMAS.ozelBuild,
+  }),
+});
 
 class AiError extends Error {
   constructor(message, status = null) {
@@ -352,10 +365,10 @@ class AiCoach {
   }
 
   // content: kullanıcı mesajı içeriği (metin/görsel blokları). Şemaya uygun JSON döndürür.
-  async ask({ content, schema, effort, maxTokens = 16000, fast = false }) {
+  async ask({ content, schema, effort, maxTokens = 16000, fast = false, system = SYSTEM }) {
     const provider = this.getProvider();
     if (!provider) throw new AiError('Yapay zekâ sağlayıcısı seçilmemiş');
-    const text = await provider.complete({ system: SYSTEM, content, schema, effort, maxTokens, fast });
+    const text = await provider.complete({ system, content, schema, effort, maxTokens, fast });
     try {
       // Bazı modeller JSON'u ``` bloğuna sarabilir; sadece nesneyi al.
       const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
@@ -536,6 +549,33 @@ ${JSON.stringify(context)}`,
     const first = { role: 'user', text: `Oyuncu verisi (cevaplarında kullan):\n${JSON.stringify(context)}` };
     const ack = { role: 'assistant', text: 'Tamam, verilerini okudum.' };
     return provider.completeText({ system: CHAT_SYSTEM, messages: [first, ack, ...history], search: true });
+  }
+
+  // Uygulamayla bağlantılı sohbet: cevap + isteğe bağlı eylem (hazır build seç ya da özel başlangıç yaz).
+  // Eylemi oyuncu düğmeyle onaylar. buildSecenekleri: [{ ulkeKodu, ulke, buildler: [{ id, ad, ... }] }]
+  async chatAct(history, context) {
+    const turns = history.map((m) => `${m.role === 'assistant' ? 'Koç' : 'Oyuncu'}: ${m.text}`);
+    const res = await this.ask({
+      system: CHAT_SYSTEM,
+      effort: 'medium',
+      schema: SCHEMAS.chat,
+      content: [{
+        type: 'text',
+        text: `Oyuncu verisi:
+${JSON.stringify(context)}
+
+Uygulamada yapabileceğin eylemler (eylem alanı; oyuncu düğmeyle onaylar):
+- Oyuncu kendine uygun hazır başlangıç/build seçmeni isterse: tur "build_sec"; ulkeKodu ve buildId'yi buildSecenekleri listesinden AYNEN seç (listede olmayanı uydurma); gerekce: neden ona uygun (tarzı, hataları, maç verisi).
+- Oyuncu kendine özel bir başlangıç/plan hazırlamanı isterse: tur "ozel_build"; ulkeKodu (ülke söylemediyse en çok oynadığı ülke, buildSecenekleri'ndeki kodlardan); ozelBuild: ilk ~10 dakikayı (Karanlık Çağ'dan Feodal'e ve Kale'ye geçişe kadar) kapsayan 8-14 adım. Her adımda köylü dağılımı (yemek, odun, altin, tas, insaat; toplamı o andaki köylü sayısı), saniye (adımın yaklaşık oyun saniyesi) ve not (kısa Türkçe: ne inşa edilecek, ne üretilecek, hangi simge yapıyla çağ atlanacak). Oyuncunun maçlarındaki hataları düzeltecek şekilde kur (ör. merkez boşta kalıyorsa sürekli köylü, geç Feodal'e geçiyorsa hedef süre). ad kısa olsun; oyunStili ve kilitNoktalar dolu olsun.
+- Başka her durumda: tur "yok" (ulkeKodu, buildId, gerekce "" ve ozelBuild boş).
+cevap: oyuncuya mesajın (kısa, Türkçe). Eylem varsa "aşağıdaki düğmeyle ekleyebilirsin" de.
+Not: maçın tamamı için sabit plan verme; başlangıç (ilk ~10 dk) ezberlenebilir, sonrası rakibe göre değişir.
+
+Konuşma:
+${turns.join('\n\n')}`,
+      }],
+    });
+    return { text: res.cevap || '', action: res.eylem || null, sources: [], searched: false };
   }
 
   // Sağdaki oyuncu listesini okur: her oyuncunun satırı, rengi ve çağı. image: { data, mediaType }

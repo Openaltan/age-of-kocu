@@ -11,6 +11,9 @@ const STABLE_TIMEOUT_MS = 90 * 1000;
 
 // Maç sonrası derin analiz: oyunun yazdığı temp.rec'i maç bittikten sonra kopyalar,
 // ayrıştırır, analiz eder ve sonucu diske yazar.
+// 2: keşif atlısı asker sayılmıyor, oyuncu no 0 okunuyor.
+const ANALYSIS_VERSION = 2;
+
 class PostGame {
   constructor({ dataDir, playbackDir, gamedata, isMatchInProgress }) {
     this.playbackDir = playbackDir;
@@ -76,10 +79,25 @@ class PostGame {
     return result;
   }
 
+  // Analiz kuralları değişince (ör. keşifçi artık asker sayılmıyor) saklanan kayıttan yeniden analiz.
+  // YZ raporu ve build adı korunur. Dönen: yeni analiz ya da (kayıt yoksa) null.
+  reanalyze(matchId) {
+    const a = this.load(matchId);
+    const file = path.join(this.replaysDir, `${matchId}.rec`);
+    if (!a || (a.version || 1) >= ANALYSIS_VERSION || !fs.existsSync(file)) return null;
+    const me = a.report.players.find((p) => p.pid === a.localPid);
+    const parsed = parseReplay(fs.readFileSync(file), this.gamedata);
+    const fresh = this.build(parsed, { localName: me?.name, build: a.buildName ? { name: a.buildName } : null });
+    const out = { ...a, ...fresh, buildName: a.buildName, matchId };
+    fs.writeFileSync(this.analysisPath(matchId), JSON.stringify(out));
+    return out;
+  }
+
   build(parsed, { localName, build }) {
     const report = analyzeReplay(parsed, this.gamedata);
     const me = report.players.find((p) => p.name === localName) || null;
     return {
+      version: ANALYSIS_VERSION,
       analyzedAt: Date.now(),
       report,
       localPid: me ? me.pid : null,

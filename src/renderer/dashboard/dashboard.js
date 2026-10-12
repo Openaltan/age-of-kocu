@@ -1,4 +1,4 @@
-import { el, fill, clock, note, resourceRow, stepSentence, playerCard, insightList } from '../shared/ui.js';
+import { el, fill, clock, note, resourceRow, stepSentence, playerCard, insightList, markdown } from '../shared/ui.js';
 import { lineChart } from './chart.js';
 import { renderCalibration, onCalibrationImage } from './calibration.js';
 
@@ -603,6 +603,26 @@ async function renderBuilds() {
 
 let showOldSeasons = false;
 
+// Build'in adından ve stratejisinden kısa Türkçe etiketler ("Hızlı Kale", "Erken baskı" …).
+const BUILD_TAGS = [
+  [/fast ?castle|\bfc\b/i, 'Hızlı Kale'],
+  [/fast ?imp|\bfi\b/i, 'Hızlı İmparatorluk'],
+  [/rush|aggr|aggro|pressure|all.?in|timing/i, 'Erken baskı'],
+  [/boom|eco|greed/i, 'Ekonomi'],
+  [/tower|kule/i, 'Kule'],
+  [/defen|safe|savun/i, 'Savunmalı'],
+  [/beginner|easy|simple/i, 'Kolay'],
+  [/water|naval|dock/i, 'Su'],
+  [/archer|longbow|crossbow|zhuge|ranged/i, 'Menzilli'],
+  [/knight|horse|lancer|cav/i, 'Atlı'],
+  [/spear|man.?at.?arms|maa|infantry/i, 'Piyade'],
+];
+
+function buildTags(b) {
+  const text = `${b.name} ${b.strategy || ''}`;
+  return [...new Set(BUILD_TAGS.filter(([re]) => re.test(text)).map(([, t]) => t))].slice(0, 3);
+}
+
 async function loadBuildList(civ, host, refresh) {
   let builds;
   try {
@@ -642,10 +662,14 @@ async function loadBuildList(civ, host, refresh) {
     const item = el('div', { class: `build-item ${openBuildId === b.id ? 'open' : ''}`, onclick: () => { openBuildId = openBuildId === b.id ? null : b.id; loadBuildList(civ, host, false); } },
       el('div', {},
         el('div', { class: 'name' }, b.name, ' ',
+          b.custom ? el('span', { class: 'pill gold', text: 'Sana özel' }) : null,
           b.season ? el('span', { class: `pill ${isCurrent(b) ? 'gold' : ''}`, text: isCurrent(b) ? b.season : `${b.season} · eski` }) : null,
-          b.map ? el('span', { class: 'pill', text: b.map }) : null),
-        el('div', { class: 'sub', text: [b.author, b.strategy, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
+          b.map ? el('span', { class: 'pill', text: b.map }) : null,
+          buildTags(b).map((t) => el('span', { class: 'pill', text: t }))),
+        el('div', { class: 'sub', text: [b.author, `${b.steps.length} adım`].filter(Boolean).join(' · ') }),
+        b.custom && b.strategy ? el('div', { class: 'desc', text: b.strategy }) : b.description ? el('div', { class: 'desc', text: b.description }) : null,
       ),
+      b.custom ? el('button', { class: 'btn', text: 'Sil', onclick: async (e) => { e.stopPropagation(); if (!confirm(`"${b.name}" silinsin mi?`)) return; await api.removeCustomBuild(b.id); loadBuildList(civ, host, false); } }) : null,
       b.id === chosen ? el('span', { class: 'chosen', text: '✓ Maçta kullanılacak' }) :
         el('button', { class: 'btn', text: 'Bunu kullan', onclick: (e) => select(e, b.id) }),
     );
@@ -1027,7 +1051,7 @@ async function renderChat() {
   const v = views.chat;
   const log = await api.getChat();
   const list = el('div', { class: 'chat-log' },
-    log.length ? log.map(chatBubble) : el('div', { class: 'box' },
+    log.length ? log.map((m, i) => chatBubble(m, i)) : el('div', { class: 'box' },
       el('p', { class: 'muted', text: 'Koça maçların, rakiplerin, haritalar ya da güncel meta hakkında soru sor. Koç maç geçmişini, analizlerini ve (maçtaysan) şu anki maçı bilir; gerekirse internette arar.' }),
       el('div', { class: 'row' }, CHAT_EXAMPLES.map((q) => el('button', { class: 'btn', text: q, onclick: () => sendChat(q) }))),
     ),
@@ -1056,11 +1080,37 @@ async function renderChat() {
   if (!chatBusy) input.focus();
 }
 
-function chatBubble(m) {
+function chatBubble(m, index) {
   return el('div', { class: `chat-msg ${m.role === 'assistant' ? 'coach' : 'me'}` },
-    el('div', { class: 'chat-text', text: m.text }),
-    m.role === 'assistant' && m.searched === false ? el('div', { class: 'chat-src', text: 'İnternet araması kullanılamadı (ücretsiz Gemini anahtarında arama kotası yok); cevap koçun kendi bilgisinden.' }) : null,
+    m.role === 'assistant' ? markdown(m.text) : el('div', { class: 'chat-text', text: m.text }),
+    m.action ? chatActionCard(m.action, index) : null,
     m.sources?.length ? el('div', { class: 'chat-src' }, 'Kaynaklar: ', m.sources.map((s, i) => [i ? ' · ' : '', el('a', { href: s.url, target: '_blank', text: s.title })])) : null,
+  );
+}
+
+// Koçun önerdiği eylem: hazır build seçimi ya da sana özel başlangıç; düğmeyle onaylanır.
+function chatActionCard(a, index) {
+  const apply = async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = 'Ekleniyor…';
+    try {
+      await api.applyChatAction(index);
+      settings = await api.getSettings();
+      renderChat();
+    } catch (err) {
+      e.target.disabled = false;
+      e.target.textContent = `Olmadı: ${err.message.replace(/^.*Error: /, '')}`;
+    }
+  };
+  const custom = a.type === 'ozel_build';
+  return el('div', { class: 'chat-action' },
+    el('div', {}, el('b', { text: custom ? 'Sana özel başlangıç: ' : 'Önerilen başlangıç: ' }), `${a.buildName} (${a.civTr})`),
+    a.reason ? el('div', { class: 'muted', text: a.reason }) : null,
+    custom && a.build ? el('details', {}, el('summary', { text: `${a.build.steps.length} adımı göster` }),
+      el('ol', {}, a.build.steps.map((st) => el('li', {}, `${st.time != null ? `${clock(st.time)} · ` : ''}${st.villagers ?? ''} köylü: `, st.notes.join(' '))))) : null,
+    a.applied
+      ? el('div', { class: 'res-win', text: custom ? "✓ Build Order'a eklendi ve seçildi; maçta oyunun üstünde görünecek" : '✓ Seçildi; maçta oyunun üstünde görünecek' })
+      : el('button', { class: 'btn primary', text: custom ? "Build Order'a ekle ve kullan" : 'Bunu kullan', onclick: apply }),
   );
 }
 

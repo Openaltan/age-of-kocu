@@ -10,13 +10,41 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_BUILDS = 15;
 
 class BuildLibrary {
-  constructor(cacheDir) {
+  // customFile: koçun oyuncuya özel yazdığı başlangıçlar (Koça Sor'dan eklenir), ülke koduna göre.
+  constructor(cacheDir, customFile = null) {
     this.cacheDir = cacheDir;
+    this.customFile = customFile;
     fs.mkdirSync(cacheDir, { recursive: true });
   }
 
+  // v2: açıklama alanı eklendi (eski önbellekte yok).
   cacheFile(guideCode) {
-    return path.join(this.cacheDir, `builds-${guideCode}.json`);
+    return path.join(this.cacheDir, `builds-v2-${guideCode}.json`);
+  }
+
+  readCustoms() {
+    if (!this.customFile) return [];
+    try {
+      return JSON.parse(fs.readFileSync(this.customFile, 'utf8'));
+    } catch {
+      return [];
+    }
+  }
+
+  customs(guideCode) {
+    return this.readCustoms().filter((b) => b.guide === guideCode);
+  }
+
+  // Özel başlangıç ekler (aynı adla varsa yerine geçer); eklenen build'i döndürür.
+  addCustom(guideCode, build) {
+    const all = this.readCustoms().filter((b) => !(b.guide === guideCode && b.name === build.name));
+    const saved = { ...build, guide: guideCode, id: build.id || `ozel-${Date.now()}`, custom: true, createdAt: Date.now() };
+    fs.writeFileSync(this.customFile, JSON.stringify([saved, ...all].slice(0, 50)));
+    return saved;
+  }
+
+  removeCustom(id) {
+    fs.writeFileSync(this.customFile, JSON.stringify(this.readCustoms().filter((b) => b.id !== id)));
   }
 
   readCache(guideCode) {
@@ -28,7 +56,13 @@ class BuildLibrary {
   }
 
   // Ülkenin build'lerini döndürür. Önbellek tazeyse ağa çıkmaz; ağ hatasında eski önbelleğe düşer.
-  async list(guideCode, { refresh = false } = {}) {
+  // Özel başlangıçlar listenin başında.
+  async list(guideCode, opts = {}) {
+    const builds = await this.listRemote(guideCode, opts);
+    return [...this.customs(guideCode), ...builds];
+  }
+
+  async listRemote(guideCode, { refresh = false } = {}) {
     const cached = this.readCache(guideCode);
     if (cached && !refresh && Date.now() - cached.at < CACHE_TTL_MS) return cached.builds;
     try {
@@ -100,6 +134,8 @@ function normalize(b) {
     author: b.author,
     strategy: b.strategy || '',
     season: b.season || '',
+    // Yazarın kısa açıklaması (HTML'siz, kısaltılmış; çoğunlukla İngilizce).
+    description: String(b.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240),
     map: b.map || null,
     source: b.source,
     steps,

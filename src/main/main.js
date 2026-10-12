@@ -21,7 +21,7 @@ const aiContext = require('./aiContext');
 const { mmss, teamContribution, summaryFor } = require('./analysis');
 const { MinimapWatcher, scoreboardRows, PALETTE, hueDist, hsv } = require('./minimap');
 const { LiveMonitor } = require('./liveEvents');
-const { BaseLedger, AGE_NAMES } = require('./baseLedger');
+const { BaseLedger, AGE_NAMES, noteText } = require('./baseLedger');
 const logger = require('./log');
 const { resolveMap, metaSummary, metaBrief } = require('./meta');
 const { squadReport, squadHabits } = require('./squad');
@@ -999,6 +999,80 @@ function chatContext() {
   };
 }
 
+// Sohbette koçun seçebileceği build'ler: oyuncunun en çok oynadığı 3 ülke (+ şu anki ülke) için güncel sezon.
+async function chatBuildOptions() {
+  const counts = new Map();
+  for (const m of store.matches.slice(0, 40)) {
+    const me = m.players.find((p) => p.profileId === state.localProfileId);
+    const civ = me && civs.fromLogCode(me.civCode);
+    if (civ) counts.set(civ.slug, (counts.get(civ.slug) || 0) + 1);
+  }
+  const slugs = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([slug]) => slug).slice(0, 3);
+  if (state.myCiv?.slug && !slugs.includes(state.myCiv.slug)) slugs.unshift(state.myCiv.slug);
+  const out = [];
+  for (const slug of slugs) {
+    const civ = civs.fromSlug(slug);
+    if (!civ) continue;
+    const builds = currentSeasonBuilds(await library.list(civ.guide)).slice(0, 8);
+    out.push({
+      ulkeKodu: slug,
+      ulke: civ.tr,
+      oynadigiMac: counts.get(slug) || 0,
+      buildler: builds.map((b) => ({
+        id: b.id,
+        ad: b.name,
+        ozel: Boolean(b.custom),
+        sezon: b.season || null,
+        strateji: b.strategy || null,
+        aciklama: b.description || null,
+        acilis: b.steps.slice(0, 4).flatMap((st) => st.notes.map(noteText)).join(' / ').slice(0, 300),
+      })),
+    });
+  }
+  return out;
+}
+
+// YZ'nin önerdiği eylemi doğrular: build listede var mı, özel başlangıç kullanılabilir mi.
+function chatActionFrom(eylem, options) {
+  if (!eylem || eylem.tur === 'yok') return null;
+  const civ = civs.fromSlug(eylem.ulkeKodu) || civs.fromSlug(options[0]?.ulkeKodu);
+  if (!civ) return null;
+  if (eylem.tur === 'build_sec') {
+    const b = options.find((o) => o.ulkeKodu === civ.slug)?.buildler.find((x) => x.id === eylem.buildId);
+    return b ? { type: 'build_sec', civSlug: civ.slug, civTr: civ.tr, buildId: b.id, buildName: b.ad, reason: eylem.gerekce || null, applied: false } : null;
+  }
+  if (eylem.tur === 'ozel_build') {
+    const build = customBuildFrom(eylem.ozelBuild, `ozel-${Date.now()}`);
+    if (!build || build.steps.length < 3) return null;
+    build.author = 'Koç (sana özel)';
+    build.kilitNoktalar = eylem.ozelBuild.kilitNoktalar || [];
+    return { type: 'ozel_build', civSlug: civ.slug, civTr: civ.tr, buildName: build.name, reason: eylem.gerekce || build.strategy || null, build, applied: false };
+  }
+  return null;
+}
+
+// Sohbetteki eylemi oyuncu onaylayınca uygular: build'i seçer ya da özel başlangıcı ekleyip seçer.
+async function chatApplyAction(index) {
+  const log = chatLog();
+  const msg = log[index];
+  const a = msg?.action;
+  if (!a || a.applied) throw new Error('Uygulanacak eylem yok');
+  const civ = civs.fromSlug(a.civSlug);
+  let buildId = a.buildId;
+  if (a.type === 'ozel_build') buildId = library.addCustom(civ.guide, a.build).id;
+  store.updateSettings({ buildByCiv: { ...store.settings.buildByCiv, [civ.slug]: buildId } });
+  if (state.myCiv?.slug === civ.slug && state.phase !== 'playing') {
+    state.build = await library.get(civ.guide, buildId);
+    pushState();
+  }
+  a.applied = true;
+  a.buildId = buildId;
+  fs.writeFileSync(userFile('chat.json'), JSON.stringify(log));
+  broadcast('settings', store.settings);
+  console.log(`sohbet eylemi uygulandı: ${a.type} · ${civ.tr} · ${a.buildName}`);
+  return log;
+}
+
 async function chatSend(text) {
   const msg = String(text || '').trim().slice(0, 2000);
   if (!msg) throw new Error('Boş mesaj');
@@ -1008,8 +1082,11 @@ async function chatSend(text) {
   let turns = log.slice(-CHAT_CONTEXT_TURNS).map(({ role, text: t }) => ({ role, text: t }));
   while (turns.length && turns[0].role !== 'user') turns.shift();
   turns = [...turns, { role: 'user', text: msg }];
-  const res = await ai.chat(turns, chatContext());
-  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: res.sources || [], searched: res.searched !== false, at: Date.now() });
+  const options = await chatBuildOptions().catch((err) => { console.warn('sohbet build listesi:', err.message); return []; });
+  const res = await ai.chatAct(turns, { ...chatContext(), buildSecenekleri: options });
+  const action = chatActionFrom(res.action, options);
+  if (action) console.log(`sohbet eylemi: ${action.type} · ${action.buildName}`);
+  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: [], searched: false, action, at: Date.now() });
   chatHistory = log.slice(-CHAT_KEEP);
   fs.writeFileSync(userFile('chat.json'), JSON.stringify(chatHistory));
   return chatHistory;
@@ -1442,8 +1519,22 @@ async function runPostGame(match, build = null) {
 }
 
 // Diskte analizi olduğu halde listede "analiz yok" görünen maçları düzeltir (ör. ayar dosyası
-// ezildiğinde kaybolan işaretler).
+// ezildiğinde kaybolan işaretler); analiz kuralları değiştiyse saklanan kayıtlardan yeniden analiz eder.
 function reconcileAnalyses() {
+  let redone = 0;
+  for (const m of store.matches) {
+    if (!m.matchId) continue;
+    try {
+      const a = postgame.reanalyze(m.matchId);
+      if (a) {
+        store.saveMatch({ matchId: m.matchId, hasAnalysis: true, analysisSummary: a.summary });
+        redone++;
+      }
+    } catch (err) {
+      console.warn(`yeniden analiz edilemedi (${m.matchId}):`, err.message);
+    }
+  }
+  if (redone) console.log(`${redone} maç yeni kurallarla yeniden analiz edildi`);
   let fixed = 0;
   for (const m of store.matches) {
     if (m.hasAnalysis || !m.matchId) continue;
@@ -1974,6 +2065,11 @@ function registerIpc() {
   ipcMain.handle('review:run', () => runReview());
   ipcMain.handle('chat:get', () => chatLog());
   ipcMain.handle('chat:send', (_e, text) => chatSend(text));
+  ipcMain.handle('chat:apply', (_e, index) => chatApplyAction(Number(index)));
+  ipcMain.handle('builds:removeCustom', (_e, id) => {
+    library.removeCustom(String(id));
+    return true;
+  });
   ipcMain.handle('chat:clear', () => {
     chatHistory = [];
     fs.writeFileSync(userFile('chat.json'), '[]');
@@ -2057,7 +2153,7 @@ if (!app.requestSingleInstanceLock()) {
     const s = store.settings;
     console.log(`başladı: sürüm ${app.getVersion()}${app.isPackaged ? '' : ' (geliştirme)'} · veri: ${app.getPath('userData')} · günlük: ${logFile}`);
     console.log(`ayarlar: sağlayıcı=${s.aiProvider} geminiAnahtarı=${Boolean(s.geminiKeyEnc)} claudeAnahtarı=${Boolean(s.aiKeyEnc)} kalibrasyon=${Boolean(s.hudRegions?.fields)} ekranOkuma=${s.screenReadingEnabled} canlıKoç=${s.liveCoach === true} mod=${s.coachMode} build=${JSON.stringify(s.buildByCiv)}`);
-    library = new BuildLibrary(path.join(app.getPath('userData'), 'cache'));
+    library = new BuildLibrary(path.join(app.getPath('userData'), 'cache'), path.join(app.getPath('userData'), 'custom-builds.json'));
     screenReader = new ScreenReader(path.join(app.getPath('userData'), 'ocr'));
     for (const [code, slug] of Object.entries(store.settings.learnedCivCodes)) civs.learnLogCode(code, slug);
     state.localProfileId = store.settings.profileId;

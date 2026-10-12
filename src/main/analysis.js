@@ -89,7 +89,8 @@ function analyzePlayer(p, events, gamedata, durationSec, actions) {
   const tcPlacements = mine.filter((e) => e.kind === 'building' && info(e).tags.includes('town_center')).map((e) => e.t);
   const vil = simulateVillagers(vilEvents, tcPlacements);
 
-  const militaryEvents = mine.filter((e) => e.kind === 'unit' && info(e).tags.includes('military'));
+  // Keşif atlısı (scout) asker sayılmaz: oyun başında çıkan keşifçi "ilk asker 0:07" gibi yanıltırdı.
+  const militaryEvents = mine.filter((e) => e.kind === 'unit' && info(e).tags.includes('military') && info(e).baseId !== 'scout');
   const composition = new Map();
   const roles = { cavalry: 0, ranged: 0, infantry: 0, siege: 0, heavy: 0, anti_cavalry: 0, anti_armor: 0 };
   for (const e of militaryEvents) {

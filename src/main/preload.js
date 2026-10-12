@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('kocu', {
   runReview: () => ipcRenderer.invoke('review:run'),
   getChat: () => ipcRenderer.invoke('chat:get'),
   sendChat: (text) => ipcRenderer.invoke('chat:send', text),
+  applyChatAction: (index) => ipcRenderer.invoke('chat:apply', index),
+  removeCustomBuild: (id) => ipcRenderer.invoke('builds:removeCustom', id),
   clearChat: () => ipcRenderer.invoke('chat:clear'),
   openLogs: () => ipcRenderer.invoke('diag:openLogs'),
   startSimulation: () => ipcRenderer.invoke('sim:start'),

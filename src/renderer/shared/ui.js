@@ -107,3 +107,59 @@ export function playerCard(c, { compact = false, ally = false } = {}) {
     c.insights?.length ? insightList(c.insights, compact ? 2 : Infinity) : null,
   );
 }
+
+// YZ metnindeki basit Markdown'ı (**kalın**, *italik*, `kod`, "- " / "* " madde, "1. " numaralı liste,
+// "# " başlık) güvenli biçimde DOM'a çevirir. HTML olarak yorumlanmaz; metin her zaman textNode'dur.
+function inline(text) {
+  const out = [];
+  const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|`[^`]+`)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(document.createTextNode(text.slice(last, m.index)));
+    const t = m[0];
+    if (t.startsWith('**') || t.startsWith('__')) out.push(el('b', { text: t.slice(2, -2) }));
+    else if (t.startsWith('`')) out.push(el('code', { text: t.slice(1, -1) }));
+    else out.push(el('i', { text: t.slice(1, -1) }));
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(document.createTextNode(text.slice(last)));
+  return out;
+}
+
+export function markdown(text) {
+  const root = el('div', { class: 'md' });
+  let list = null;
+  let para = [];
+  const flush = () => {
+    if (para.length) root.append(el('p', {}, inline(para.join(' '))));
+    para = [];
+  };
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    const bullet = /^[-*•]\s+(.*)$/.exec(line);
+    const num = /^\d+[.)]\s+(.*)$/.exec(line);
+    const head = /^#{1,4}\s+(.*)$/.exec(line);
+    if (bullet || num) {
+      flush();
+      const tag = num ? 'ol' : 'ul';
+      if (!list || list.tagName.toLowerCase() !== tag) {
+        list = el(tag);
+        root.append(list);
+      }
+      list.append(el('li', {}, inline((bullet || num)[1])));
+      continue;
+    }
+    list = null;
+    if (!line) {
+      flush();
+    } else if (head) {
+      flush();
+      root.append(el('p', {}, el('b', {}, inline(head[1]))));
+    } else {
+      para.push(line);
+    }
+  }
+  flush();
+  return root;
+}
