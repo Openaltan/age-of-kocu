@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   aiLive: true, // maç içi periyodik YZ değerlendirmesi
   aiVision: true, // değerlendirmede ekran görüntüsü gönder
   aiLiveIntervalMin: 3,
+  chatPrefs: [], // sohbette söylenen kalıcı tercihler ("Hızlı Kale sevmem"); koç önerilerde dikkate alır
   liveCoach: false, // canlı koç (deneysel, YZ): kapalıyken oyun içinde sadece build başlangıcı görünür
   coachMode: 'normal', // normal: uyarı ve öneri · yonet: koç her an sıralı komut verir (oyuncu uygular)
   aiReport: true, // maç sonu YZ raporu

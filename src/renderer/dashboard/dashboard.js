@@ -1105,6 +1105,7 @@ async function renderChat() {
       el('h1', { text: 'Koça Sor' }),
       log.length ? el('button', { class: 'btn', text: 'Sohbeti temizle', onclick: async () => { await api.clearChat(); renderChat(); } }) : null,
     ),
+    chatPrefsBox(),
     list,
     el('div', { class: 'chat-compose' }, input, el('button', { class: 'btn primary', text: 'Gönder', disabled: chatBusy, onclick: () => sendChat(input.value) })),
     msg,
@@ -1113,10 +1114,22 @@ async function renderChat() {
   if (!chatBusy) input.focus();
 }
 
+// Koçun hatırladığı kalıcı tercihler; sohbette söyleyince eklenir, buradan silinir.
+function chatPrefsBox() {
+  const prefs = settings.chatPrefs || [];
+  if (!prefs.length) return null;
+  return el('div', { class: 'chat-prefs' },
+    el('span', { class: 'muted', text: 'Koçun hatırladığı tercihlerin: ' }),
+    prefs.map((p) => el('span', { class: 'pill' }, p, ' ',
+      el('button', { class: 'pill-x', title: 'Unut', text: '×', onclick: async () => { settings = await api.updateSettings({ chatPrefs: prefs.filter((x) => x !== p) }); renderChat(); } }))),
+  );
+}
+
 function chatBubble(m, index, last = false) {
   return el('div', { class: `chat-msg ${m.role === 'assistant' ? 'coach' : 'me'}` },
     m.role === 'assistant' ? markdown(m.text) : el('div', { class: 'chat-text', text: m.text }),
     m.action ? chatActionCard(m.action, index) : null,
+    m.savedPref ? el('div', { class: 'chat-pref muted', text: `📌 Tercihin kaydedildi: ${m.savedPref}` }) : null,
     m.suggestions?.length && last ? el('div', { class: 'chat-suggest' }, m.suggestions.map((q) => el('button', { class: 'btn small', text: q, disabled: chatBusy, onclick: () => sendChat(q) }))) : null,
     m.sources?.length ? el('div', { class: 'chat-src' }, 'Kaynaklar: ', m.sources.map((s, i) => [i ? ' · ' : '', el('a', { href: s.url, target: '_blank', text: s.title })])) : null,
   );

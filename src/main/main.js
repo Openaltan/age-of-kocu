@@ -981,6 +981,7 @@ function chatContext() {
   const inMatch = state.phase === 'loading' || state.phase === 'playing';
   return {
     ben: myPlayer(state.match)?.name || store.matches.map(me).find(Boolean)?.name || null,
+    tercihlerim: store.settings.chatPrefs || [],
     sonMaclarim: recent,
     sonAnalizliMac: lastAnalysis ? { harita: last.map, sonuc: last.result, tespitler: lastAnalysis.findings.map((x) => x.text), koçRaporu: lastAnalysis.aiReport?.ozet || null } : null,
     gelisimRaporu: review ? { tarih: new Date(review.at).toISOString().slice(0, 10), ...review.review } : null,
@@ -1086,7 +1087,13 @@ async function chatSend(text) {
   const res = await ai.chatAct(turns, { ...chatContext(), buildSecenekleri: options });
   const action = chatActionFrom(res.action, options);
   if (action) console.log(`sohbet eylemi: ${action.type} · ${action.buildName}`);
-  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: [], searched: false, action, suggestions: res.suggestions || [], at: Date.now() });
+  const prefs = store.settings.chatPrefs || [];
+  const savedPref = res.newPref && !prefs.some((p) => p.toLowerCase() === res.newPref.toLowerCase()) ? res.newPref : null;
+  if (savedPref) {
+    store.updateSettings({ chatPrefs: [...prefs, savedPref].slice(-12) });
+    broadcast('settings', store.settings);
+  }
+  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: [], searched: false, action, suggestions: res.suggestions || [], savedPref, at: Date.now() });
   chatHistory = log.slice(-CHAT_KEEP);
   fs.writeFileSync(userFile('chat.json'), JSON.stringify(chatHistory));
   return chatHistory;

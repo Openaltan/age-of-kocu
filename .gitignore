@@ -3,3 +3,4 @@ dist/
 server/team-room/node_modules/
 server/team-room/.wrangler/
 *.log.tmp
+dist*/

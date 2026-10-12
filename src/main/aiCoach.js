@@ -133,6 +133,7 @@ const CHAT_SYSTEM = `Sen Age of Empires IV için profesyonel bir koçsun; Türk 
 SCHEMAS.chat = obj({
   cevap: str,
   oneriler: { type: 'array', items: str },
+  yeniTercih: str,
   eylem: obj({
     tur: { type: 'string', enum: ['yok', 'build_sec', 'ozel_build'] },
     ulkeKodu: str,
@@ -571,6 +572,7 @@ Uygulamada yapabileceğin eylemler (eylem alanı; oyuncu düğmeyle onaylar):
 - Oyuncu kendine özel bir başlangıç/plan hazırlamanı isterse: tur "ozel_build"; ulkeKodu (ülke söylemediyse en çok oynadığı ülke, buildSecenekleri'ndeki kodlardan); ozelBuild: ilk ~10 dakikayı (Karanlık Çağ'dan Feodal'e ve Kale'ye geçişe kadar) kapsayan 8-14 adım. Her adımda köylü dağılımı (yemek, odun, altin, tas, insaat; toplamı o andaki köylü sayısı), saniye (adımın yaklaşık oyun saniyesi) ve not (kısa Türkçe: ne inşa edilecek, ne üretilecek, hangi simge yapıyla çağ atlanacak). Oyuncunun maçlarındaki hataları düzeltecek şekilde kur (ör. merkez boşta kalıyorsa sürekli köylü, geç Feodal'e geçiyorsa hedef süre). ad kısa olsun; oyunStili ve kilitNoktalar dolu olsun.
 - Başka her durumda: tur "yok" (ulkeKodu, buildId, gerekce "" ve ozelBuild boş).
 cevap: oyuncuya mesajın (kısa, Türkçe). Eylem varsa "aşağıdaki düğmeyle ekleyebilirsin" de.
+yeniTercih: oyuncu bu mesajında kalıcı bir tercih ya da hedef söylediyse (ör. "Hızlı Kale sevmem", "agresif oynamak istiyorum", "Japonlara odaklanıyorum") onu kısa tek cümle olarak yaz (üçüncü şahıs değil: "Hızlı Kale sevmiyor" yerine "Hızlı Kale sevmiyorum"); geçici soru ya da tek seferlik istekse "". tercihlerim listesindekini tekrar yazma. Önerilerinde ve build seçiminde tercihlerim listesine uy.
 oneriler: 1-3 kısa takip önerisi; oyuncunun ağzından, tek tıkla sana gönderilecek istek cümlesi (ör. "Buna göre bana özel bir açılış hazırla", "Bana uygun hazır bir build seç", "Son maçımdaki en büyük hatamı açıkla"). Gerçekten fayda sağlayacak olanları seç; az önce yaptığını tekrar önerme. cevap'ın sonunda bunlardan birini soru olarak teklif edebilirsin ("İstersen buna göre sana özel bir açılış hazırlayabilirim.").
 Not: maçın tamamı için sabit plan verme; başlangıç (ilk ~10 dk) ezberlenebilir, sonrası rakibe göre değişir.
 
@@ -578,7 +580,7 @@ Konuşma:
 ${turns.join('\n\n')}`,
       }],
     });
-    return { text: res.cevap || '', action: res.eylem || null, suggestions: (res.oneriler || []).map((s) => String(s).trim()).filter(Boolean).slice(0, 3), sources: [], searched: false };
+    return { text: res.cevap || '', action: res.eylem || null, newPref: String(res.yeniTercih || '').trim().slice(0, 140), suggestions: (res.oneriler || []).map((s) => String(s).trim()).filter(Boolean).slice(0, 3), sources: [], searched: false };
   }
 
   // Sağdaki oyuncu listesini okur: her oyuncunun satırı, rengi ve çağı. image: { data, mediaType }

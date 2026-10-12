@@ -189,3 +189,7 @@ table.cmp td.wrap { white-space: normal; text-align: left; }
 .chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chat-suggest .btn { text-align: left; white-space: normal; }
 .build-item .desc:empty { display: none; }
+.chat-prefs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; font-size: 12.5px; }
+.pill-x { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 13px; }
+.pill-x:hover { color: var(--text); }
+.chat-pref { font-size: 12px; margin-top: 6px; }
