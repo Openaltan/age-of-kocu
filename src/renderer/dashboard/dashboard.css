@@ -186,3 +186,5 @@ table.cmp td.wrap { white-space: normal; text-align: left; }
 .chat-msg .md ul, .chat-msg .md ol { margin: 4px 0 6px 20px; }
 .chat-msg .md li { margin-bottom: 3px; line-height: 1.45; }
 .chat-msg .md code { background: var(--panel-2); padding: 1px 4px; border-radius: 3px; }
+.chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chat-suggest .btn { text-align: left; white-space: normal; }

@@ -1051,7 +1051,7 @@ async function renderChat() {
   const v = views.chat;
   const log = await api.getChat();
   const list = el('div', { class: 'chat-log' },
-    log.length ? log.map((m, i) => chatBubble(m, i)) : el('div', { class: 'box' },
+    log.length ? log.map((m, i) => chatBubble(m, i, i === log.length - 1)) : el('div', { class: 'box' },
       el('p', { class: 'muted', text: 'Koça maçların, rakiplerin, haritalar ya da güncel meta hakkında soru sor. Koç maç geçmişini, analizlerini ve (maçtaysan) şu anki maçı bilir; gerekirse internette arar.' }),
       el('div', { class: 'row' }, CHAT_EXAMPLES.map((q) => el('button', { class: 'btn', text: q, onclick: () => sendChat(q) }))),
     ),
@@ -1080,10 +1080,11 @@ async function renderChat() {
   if (!chatBusy) input.focus();
 }
 
-function chatBubble(m, index) {
+function chatBubble(m, index, last = false) {
   return el('div', { class: `chat-msg ${m.role === 'assistant' ? 'coach' : 'me'}` },
     m.role === 'assistant' ? markdown(m.text) : el('div', { class: 'chat-text', text: m.text }),
     m.action ? chatActionCard(m.action, index) : null,
+    m.suggestions?.length && last ? el('div', { class: 'chat-suggest' }, m.suggestions.map((q) => el('button', { class: 'btn small', text: q, disabled: chatBusy, onclick: () => sendChat(q) }))) : null,
     m.sources?.length ? el('div', { class: 'chat-src' }, 'Kaynaklar: ', m.sources.map((s, i) => [i ? ' · ' : '', el('a', { href: s.url, target: '_blank', text: s.title })])) : null,
   );
 }

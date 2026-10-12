@@ -1086,7 +1086,7 @@ async function chatSend(text) {
   const res = await ai.chatAct(turns, { ...chatContext(), buildSecenekleri: options });
   const action = chatActionFrom(res.action, options);
   if (action) console.log(`sohbet eylemi: ${action.type} · ${action.buildName}`);
-  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: [], searched: false, action, at: Date.now() });
+  log.push({ role: 'user', text: msg, at: Date.now() }, { role: 'assistant', text: res.text, sources: [], searched: false, action, suggestions: res.suggestions || [], at: Date.now() });
   chatHistory = log.slice(-CHAT_KEEP);
   fs.writeFileSync(userFile('chat.json'), JSON.stringify(chatHistory));
   return chatHistory;
