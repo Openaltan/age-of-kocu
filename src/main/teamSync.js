@@ -164,4 +164,24 @@ function teamNotes(me, mates, elapsedSec) {
   return out;
 }
 
-module.exports = { TeamSync, teamNotes, roomKey };
+// Ortak ulus önerisinin sunucudaki adresi: ekip (sıralı kimlikler), maç türü ve takım seviyesi.
+// Ekipteki her uygulama aynı anahtarı üretir ve aynı öneriyi görür.
+function adviceKey(memberIds, kind, rankLevel) {
+  const ids = [...memberIds].map(String).sort().join(',');
+  return crypto.createHash('sha256').update(`age-of-kocu-advice|${ids}|${kind}|${rankLevel}`).digest('hex');
+}
+
+// Takımın ortalama puanından seviye (AoE4World rank_level eşikleriyle). Herkes aynı seviyeye bakar.
+function teamRankLevel(ratings) {
+  const xs = ratings.filter((r) => Number.isFinite(r));
+  if (!xs.length) return 'gold';
+  const avg = xs.reduce((a, b) => a + b, 0) / xs.length;
+  if (avg < 500) return 'bronze';
+  if (avg < 700) return 'silver';
+  if (avg < 1000) return 'gold';
+  if (avg < 1200) return 'platinum';
+  if (avg < 1400) return 'diamond';
+  return 'conqueror';
+}
+
+module.exports = { TeamSync, teamNotes, roomKey, adviceKey, teamRankLevel };

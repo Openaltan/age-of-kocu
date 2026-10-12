@@ -7,7 +7,7 @@ const { Store } = require('./store');
 const { BuildLibrary, currentSeasonBuilds } = require('./aoe4guides');
 const { Coach, buildAlerts, enemyLabels, pickBuild, customBuildFrom } = require('./coach');
 const { NoteBoard } = require('./notes');
-const { TeamSync, teamNotes } = require('./teamSync');
+const { TeamSync, teamNotes, adviceKey, teamRankLevel } = require('./teamSync');
 const aoe4world = require('./aoe4world');
 const scout = require('./scout');
 const civs = require('./civs');
@@ -1030,7 +1030,11 @@ async function refreshSquad({ force = false } = {}) {
     const report = squadReport(members, gamesByMember, { civName: (c) => civs.trName(c) });
     const habits = squadHabits(members, store.matches, (id) => postgame.load(id));
     const rankLevel = aoe4world.rankLevelOf(me.modes?.rm_team?.rank_level) || 'gold';
-    const out = { at: Date.now(), me: myId, members, rankLevel, rating: me.modes?.rm_team?.rating ?? null, report, habits };
+    // Ortak öneri için ekip seviyesi: üyelerin takım puanı ortalaması (her uygulamada aynı çıkar).
+    const ratings = [me.modes?.rm_team?.rating];
+    for (const m of members.slice(1)) ratings.push(await aoe4world.player(m.id).then((p) => p.modes?.rm_team?.rating).catch(() => null));
+    const teamLevel = teamRankLevel(ratings.map(Number));
+    const out = { at: Date.now(), me: myId, members, rankLevel, teamRankLevel: teamLevel, rating: me.modes?.rm_team?.rating ?? null, report, habits };
     fs.writeFileSync(userFile('squad.json'), JSON.stringify(out));
     console.log(`takım analizi: ${members.map((m) => m.name).join(', ')} · ${report.toplamTakimMaci} takım maçı · seviye ${rankLevel}`);
     return out;
@@ -1044,14 +1048,62 @@ function mapPool(mapRows) {
   return mapRows.filter((m) => total && m.games_count / total >= 0.02).sort((a, b) => b.games_count - a.games_count).slice(0, 14);
 }
 
+// Ortak ulus önerisi takım sunucusunda saklanır: ekipte ilk hesaplayanın önerisini herkes görür.
+function adviceUrl(key) {
+  return `${teamServer().replace(/\/$/, '')}/advice/${key}`;
+}
+
+async function sharedAdviceGet(key) {
+  if (store.settings.teamSyncEnabled === false) return null;
+  const res = await withTimeout(fetch(adviceUrl(key)), 8000, 'takım sunucusu gecikti');
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`takım sunucusu ${res.status}`);
+  return res.json();
+}
+
+async function sharedAdvicePut(key, data, replace) {
+  if (store.settings.teamSyncEnabled === false) return null;
+  const res = await withTimeout(fetch(adviceUrl(key), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data, replace }) }), 8000, 'takım sunucusu gecikti');
+  if (!res.ok) throw new Error(`takım sunucusu ${res.status}`);
+  return res.json();
+}
+
+function saveAdvice(record, key) {
+  const out = { ...record.data, at: record.at, me: state.localProfileId, key, shared: true };
+  fs.writeFileSync(userFile('civ-advice.json'), JSON.stringify(out));
+  return out;
+}
+
+// Sunucudaki ortak öneri daha yeniyse yerel kopyayı günceller (ulus seçme ekranında da çağrılır).
+async function syncSharedAdvice() {
+  const local = readUserJson('civ-advice.json', null);
+  if (!local?.key) return local;
+  try {
+    const remote = await sharedAdviceGet(local.key);
+    if (remote && remote.at > (local.at || 0)) {
+      console.log('ortak ulus önerisi sunucudan güncellendi');
+      return saveAdvice(remote, local.key);
+    }
+  } catch (err) {
+    console.warn('ortak öneri:', err.message);
+  }
+  return local;
+}
+
 async function refreshCivAdvice({ force = false } = {}) {
-  const cached = readUserJson('civ-advice.json', null);
-  if (!force && cached && cached.me === state.localProfileId && Date.now() - cached.at < ADVICE_TTL_MS) return cached;
-  if (!ai.available()) throw new Error('Yapay zekâ anahtarı girilmemiş (Ayarlar › Yapay Zekâ Koç)');
   adviceBusy ||= (async () => {
     const squad = await refreshSquad();
     const kind = squad.members.length >= 3 ? 'rm_3v3' : 'rm_2v2';
-    const level = squad.rankLevel;
+    const level = squad.teamRankLevel || squad.rankLevel;
+    const key = adviceKey(squad.members.map((m) => m.id), kind, level);
+    // 1) Ekipten biri zaten hesapladıysa onu kullan (yenile istenmedikçe).
+    if (!force) {
+      const remote = await sharedAdviceGet(key).catch((err) => { console.warn('ortak öneri:', err.message); return null; });
+      if (remote) return saveAdvice(remote, key);
+      const local = readUserJson('civ-advice.json', null);
+      if (local && local.key === key && Date.now() - local.at < ADVICE_TTL_MS) return local;
+    }
+    if (!ai.available()) throw new Error('Yapay zekâ anahtarı girilmemiş (Ayarlar › Yapay Zekâ Koç)');
     const upper = aoe4world.nextRankLevel(level);
     const pool = mapPool(await aoe4world.mapStats(kind, level));
     const top = (rows) => [...rows].filter((r) => r.games_count >= 100).sort((a, b) => b.win_rate - a.win_rate).slice(0, 6).map((r) => `${civs.trName(r.civilization)} %${Math.round(r.win_rate * 10) / 10}`);
@@ -1073,7 +1125,17 @@ async function refreshCivAdvice({ force = false } = {}) {
     };
     console.log(`ulus önerisi isteniyor: ${pool.length} harita · ${kind} · ${level}`);
     const advice = await ai.civAdvice(context);
-    const out = { at: Date.now(), me: state.localProfileId, kind, rankLevel: level, members: squad.members, pool: pool.map((m) => m.map), advice };
+    // Sütun sırası her uygulamada aynı olsun: üyeler kimliğe göre sıralı.
+    const members = [...squad.members].sort((a, b) => a.id - b.id);
+    const data = { kind, rankLevel: level, members, pool: pool.map((m) => m.map), advice, by: squad.members[0].name };
+    // 2) Sunucuya koy; o arada ekipten biri koyduysa (ve yenile istenmediyse) sunucudaki geçerli olur.
+    try {
+      const stored = await sharedAdvicePut(key, data, force);
+      if (stored) return saveAdvice(stored, key);
+    } catch (err) {
+      console.warn('ortak öneri yazılamadı (yerelde kullanılıyor):', err.message);
+    }
+    const out = { ...data, at: Date.now(), me: state.localProfileId, key, shared: false };
     fs.writeFileSync(userFile('civ-advice.json'), JSON.stringify(out));
     return out;
   })().finally(() => { adviceBusy = null; });
@@ -1084,7 +1146,7 @@ async function refreshCivAdvice({ force = false } = {}) {
 function backgroundTeamRefresh() {
   if (!state.localProfileId) return;
   refreshSquad()
-    .then(() => (store.settings.civAdvice !== false && ai.available() ? refreshCivAdvice() : null))
+    .then(() => (store.settings.civAdvice !== false ? refreshCivAdvice() : null))
     .catch((err) => console.warn('takım/ulus önerisi:', err.message));
 }
 
@@ -1109,9 +1171,9 @@ function squadBrief(match = null) {
 
 const CIV_PICK_TRIES_MS = [3000, 8000, 14000, 22000, 30000];
 
-function onMatchFound(matchId) {
+async function onMatchFound(matchId) {
   if (store.settings.civAdvice === false || matchInProgress()) return;
-  const advice = readUserJson('civ-advice.json', null);
+  const advice = await withTimeout(syncSharedAdvice(), 4000, 'gecikti').catch(() => readUserJson('civ-advice.json', null));
   state.civSelect = { matchId, at: Date.now(), map: null, status: advice ? 'harita okunuyor' : 'öneri yok' };
   console.log(`eşleşme bulundu: ${matchId} · ulus önerisi ${advice ? 'hazır' : 'yok'}`);
   if (!advice) {
@@ -1839,7 +1901,8 @@ function registerIpc() {
   ipcMain.handle('squad:get', () => ({ squad: readUserJson('squad.json', null), advice: readUserJson('civ-advice.json', null) }));
   ipcMain.handle('squad:refresh', async (_e, withAdvice) => {
     const squad = await refreshSquad({ force: true });
-    const advice = withAdvice ? await refreshCivAdvice({ force: true }) : readUserJson('civ-advice.json', null);
+    // "Verileri yenile" ekipçe ortak öneriyi de sunucudan çeker; "Önerileri yenile" yeniden hesaplar.
+    const advice = withAdvice ? await refreshCivAdvice({ force: true }) : await syncSharedAdvice();
     return { squad, advice };
   });
   ipcMain.handle('review:get', () => readUserJson('review.json', null));

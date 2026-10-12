@@ -88,3 +88,13 @@ test('YZ uyarısı: tahmin "Olası" ve bilgi seviyesi, sadece gerçek olay takı
   // Türü olmayan eski yanıt: tahmin say.
   assert.strictEqual(warningNote({ uyari: 'Altına baskın', risk: 'yüksek' }).text, 'Olası: Altına baskın');
 });
+
+test('ortak ulus önerisi anahtarı ekip sırasından bağımsız; takım seviyesi ortalama puandan', () => {
+  const { adviceKey, teamRankLevel } = require('../src/main/teamSync');
+  assert.strictEqual(adviceKey([21327806, 24071999, 24072073], 'rm_3v3', 'silver'), adviceKey([24072073, 21327806, 24071999], 'rm_3v3', 'silver'));
+  assert.notStrictEqual(adviceKey([1, 2, 3], 'rm_3v3', 'silver'), adviceKey([1, 2, 3], 'rm_3v3', 'gold'));
+  assert.match(adviceKey([1, 2], 'rm_2v2', 'gold'), /^[a-f0-9]{64}$/);
+  assert.strictEqual(teamRankLevel([500, 650, 700]), 'silver'); // ort. 616
+  assert.strictEqual(teamRankLevel([1450, 1500]), 'conqueror');
+  assert.strictEqual(teamRankLevel([NaN, null]), 'gold');
+});

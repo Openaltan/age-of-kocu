@@ -1,4 +1,4 @@
-# Age of Koçu takım odası: aynı odadaki uygulamalar arasında mesaj aktarır, veri saklamaz.
+# Age of Koçu takım odası: aynı odadaki uygulamalar arasında mesaj aktarır; ekibin ortak ulus önerisini 3 gün saklar.
 name = "age-of-kocu-team"
 main = "src/index.js"
 compatibility_date = "2025-09-01"

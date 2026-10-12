@@ -922,7 +922,7 @@ function habitCard(h) {
 function civAdviceTable(advice) {
   const members = advice.members.map((m) => m.name);
   return el('div', { class: 'box cmp-wrap' },
-    el('p', { class: 'muted', text: `${advice.kind === 'rm_3v3' ? '3v3' : '2v2'} · seviye ${advice.rankLevel} · ${new Date(advice.at).toLocaleDateString('tr-TR')} · ulus seçme ekranında harita okununca bu satır oyunun üstünde görünür.` }),
+    el('p', { class: 'muted', text: `${advice.kind === 'rm_3v3' ? '3v3' : '2v2'} · takım seviyesi ${advice.rankLevel} · ${new Date(advice.at).toLocaleDateString('tr-TR')}${advice.shared ? ` · ekipçe ortak (${advice.by || 'ekipten biri'} hesapladı; üçünüz de aynı tabloyu görürsünüz)` : ' · sadece bu bilgisayarda (takım sunucusuna ulaşılamadı)'} · ulus seçme ekranında harita okununca bu satır oyunun üstünde görünür.` }),
     el('table', { class: 'cmp' },
       el('tr', {}, el('th', { text: 'Harita' }), members.map((n) => el('th', { text: n })), el('th', { text: 'Plan' })),
       advice.advice.haritalar.map((h) => el('tr', {},
