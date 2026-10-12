@@ -57,11 +57,13 @@ function parsePlayers(buf, end) {
     if (nameEnd + 13 > end) continue;
     const team = buf.readUInt32LE(nameEnd);
     const pid = buf.readUInt32LE(nameEnd + 4);
-    if (team > 8 || pid < 1 || pid > 32 || buf[nameEnd + 8] !== 1) continue;
+    // Oyuncu numarası 0 da olabilir (ör. maçtan erken düşen oyuncu); 0 dışlanırsa o oyuncu listeden
+    // düşer ve kayıt maçla eşleşmez. Aynı desene uyan lobi ayarları ("map_size_640") oyuncu değildir.
+    if (team > 8 || pid > 32 || buf[nameEnd + 8] !== 1) continue;
     const civLen = buf.readUInt32LE(nameEnd + 9);
     if (civLen < 3 || civLen > 40 || nameEnd + 13 + civLen > end) continue;
     const civ = buf.toString('latin1', nameEnd + 13, nameEnd + 13 + civLen);
-    if (!/^[a-z][a-z0-9_]*$/.test(civ)) continue;
+    if (!/^[a-z][a-z0-9_]*$/.test(civ) || (pid === 0 && /^map_/.test(civ))) continue;
     const name = buf.toString('utf16le', i + 4, nameEnd);
     if (/[\u0000-\u001f]/.test(name)) continue;
     players.push({ pid, name, team, civCode: civ });
@@ -127,4 +129,4 @@ function readPbgid(buf, r, clen, gamedata) {
   return buf.readUInt32LE(r + 31);
 }
 
-module.exports = { parseReplay, ReplayError, TICKS_PER_SECOND };
+module.exports = { parseReplay, parsePlayers, ReplayError, TICKS_PER_SECOND };

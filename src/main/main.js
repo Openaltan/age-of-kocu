@@ -18,7 +18,7 @@ const { HudState, HudCoach, FIELDS, AREAS, fitDistribution, distributionLine } =
 const fs = require('fs');
 const { AiCoach, ClaudeProvider, GeminiProvider } = require('./aiCoach');
 const aiContext = require('./aiContext');
-const { mmss, teamContribution } = require('./analysis');
+const { mmss, teamContribution, summaryFor } = require('./analysis');
 const { MinimapWatcher, scoreboardRows, PALETTE, hueDist, hsv } = require('./minimap');
 const { LiveMonitor } = require('./liveEvents');
 const { BaseLedger, AGE_NAMES } = require('./baseLedger');
@@ -396,6 +396,17 @@ function saveApiKey(provider, key) {
 // sadece seçili build'in başlangıcı görünür; YZ ve ekran görüntüsü kullanılmaz. Kod duruyor, ayardan açılır.
 function liveOn() {
   return store?.settings.liveCoach === true;
+}
+
+// Windows açılınca arka planda başlat: maçlar uygulama açıkken bittiği için hepsi analiz edilir
+// (oyun sadece son maçın kaydını tutar). Sadece kurulu uygulamada.
+function applyLoginItem() {
+  if (!app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: store.settings.startWithWindows === true, args: ['--hidden'] });
+  } catch (err) {
+    console.warn('başlangıçta açılma ayarlanamadı:', err.message);
+  }
 }
 
 function refreshAiState() {
@@ -1415,15 +1426,34 @@ async function runPostGame(match, build = null) {
   state.analysis = { matchId: match.matchId, status: 'running' };
   pushState();
   try {
+    console.log(`maç analizi başladı: ${match.matchId}`);
     const result = await postgame.analyzeMatch(match, { localName: myPlayer(match)?.name, build });
+    console.log(`maç analizi bitti: ${match.matchId}`);
     store.saveMatch({ matchId: match.matchId, hasAnalysis: true, analysisSummary: result.summary });
     state.analysis = { matchId: match.matchId, status: 'done' };
     broadcast('matches', store.matches);
     if (aiOn('aiReport')) runReport(match.matchId).then(pushState).catch((err) => console.warn('YZ raporu:', err.message));
   } catch (err) {
+    console.warn(`maç analizi yapılamadı (${match.matchId}):`, err.message);
     state.analysis = { matchId: match.matchId, status: 'error', message: err.message };
+    store.saveMatch({ matchId: match.matchId, analysisError: err.message });
   }
   pushState();
+}
+
+// Diskte analizi olduğu halde listede "analiz yok" görünen maçları düzeltir (ör. ayar dosyası
+// ezildiğinde kaybolan işaretler).
+function reconcileAnalyses() {
+  let fixed = 0;
+  for (const m of store.matches) {
+    if (m.hasAnalysis || !m.matchId) continue;
+    const a = postgame.load(m.matchId);
+    if (!a) continue;
+    const me = a.report?.players.find((p) => p.pid === a.localPid);
+    store.saveMatch({ matchId: m.matchId, hasAnalysis: true, analysisSummary: a.summary || (me ? summaryFor(me) : null) });
+    fixed++;
+  }
+  if (fixed) console.log(`${fixed} maçın analiz işareti düzeltildi`);
 }
 
 function matchInProgress() {
@@ -1584,6 +1614,7 @@ function startWatcher() {
     gamedata,
     isMatchInProgress: matchInProgress,
   });
+  reconcileAnalyses();
   watcher = new LogWatcher(state.logPath);
   watcher.on('missing', () => {
     state.logFound = false;
@@ -1663,8 +1694,12 @@ function stopSimulation() {
 
 // ---------- Pencereler ----------
 
+// Windows açılışında arka planda başlatıldıysa (--hidden) panel görünmez; uygulamayı tekrar açınca gelir.
+const START_HIDDEN = process.argv.includes('--hidden');
+
 function createDashboard() {
   dashboardWin = new BrowserWindow({
+    show: !START_HIDDEN,
     width: 1180,
     height: 800,
     minWidth: 900,
@@ -1825,7 +1860,7 @@ function registerIpc() {
     const allowed = {};
     if ('overlaySide' in patch) allowed.overlaySide = patch.overlaySide === 'left' ? 'left' : 'right';
     if ('screenReadingEnabled' in patch) allowed.screenReadingEnabled = Boolean(patch.screenReadingEnabled);
-    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate', 'aiResearch', 'civAdvice', 'liveCoach']) if (k in patch) allowed[k] = Boolean(patch[k]);
+    for (const k of ['aiPrematch', 'aiLive', 'aiVision', 'aiReport', 'aiTranslate', 'aiResearch', 'civAdvice', 'liveCoach', 'startWithWindows']) if (k in patch) allowed[k] = Boolean(patch[k]);
     if ('aiLiveIntervalMin' in patch) allowed.aiLiveIntervalMin = Math.min(10, Math.max(1, Number(patch.aiLiveIntervalMin) || 3));
     if ('aiProvider' in patch) allowed.aiProvider = patch.aiProvider === 'claude' ? 'claude' : 'gemini';
     if ('overlayMode' in patch) allowed.overlayMode = patch.overlayMode === 'detailed' ? 'detailed' : 'simple';
@@ -1840,6 +1875,7 @@ function registerIpc() {
     if ('aiProvider' in allowed) refreshAiState();
     if ('coachMode' in allowed) onCoachModeChanged();
     if ('liveCoach' in allowed) refreshAiState();
+    if ('startWithWindows' in allowed) applyLoginItem();
     broadcast('settings', s);
     pushState();
     return s;
@@ -2001,6 +2037,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     if (dashboardWin) {
+      if (!dashboardWin.isVisible()) dashboardWin.show();
       if (dashboardWin.isMinimized()) dashboardWin.restore();
       dashboardWin.focus();
     }
@@ -2029,6 +2066,7 @@ if (!app.requestSingleInstanceLock()) {
     state.teamServer = Boolean(store.settings.teamServerUrl || DEFAULT_TEAM_SERVER);
 
     registerIpc();
+    applyLoginItem();
     createDashboard();
     createOverlay();
     registerShortcuts();

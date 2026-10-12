@@ -98,10 +98,14 @@ class PostGame {
   }
 }
 
+// Kayıt bu maça mı ait: maçtaki (log) oyuncuların en fazla biri kayıtta bulunamayabilir ve kayıtta
+// maçta olmayan en fazla bir isim olabilir. Tek bir okunamayan oyuncu (ör. erken düşen) analizi düşürmesin.
 function samePlayers(replayPlayers, matchPlayers) {
-  const a = replayPlayers.map((p) => p.name).sort();
-  const b = matchPlayers.map((p) => p.name).sort();
-  return a.length === b.length && a.every((n, i) => n === b[i]);
+  const a = new Set(replayPlayers.map((p) => p.name));
+  const b = new Set(matchPlayers.map((p) => p.name));
+  const missing = [...b].filter((n) => !a.has(n)).length;
+  const extra = [...a].filter((n) => !b.has(n)).length;
+  return b.size > 0 && missing <= 1 && extra <= 1 && missing < b.size / 2;
 }
 
 // Oyun maç sonunda dosyayı bir süre daha yazabilir; boyut ve zaman STABLE_MS boyunca

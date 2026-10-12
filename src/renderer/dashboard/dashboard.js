@@ -233,6 +233,7 @@ async function renderAnalysis() {
       } }),
     ),
     st && st.status !== 'done' ? el('p', { class: st.status === 'error' ? 'res-loss' : 'muted', text: `${ANALYSIS_STATUS[st.status]}${st.message ? `: ${st.message}` : ''}` }) : null,
+    missingAnalyses(),
   ];
 
   let a = importedAnalysis;
@@ -246,6 +247,18 @@ async function renderAnalysis() {
     return;
   }
   fill(v, head, analysisBody(a, m));
+}
+
+// Son maçlardan analizi olmayanlar ve nedeni: çoğunlukla uygulama kapalıyken oynanmış (oyun sadece
+// son maçın kaydını tutar).
+function missingAnalyses() {
+  const list = matches.slice(0, 15).filter((m) => !m.hasAnalysis && (m.durationSec || 0) > 120);
+  if (!list.length) return null;
+  return el('details', { class: 'box' },
+    el('summary', {}, `Son maçlardan ${list.length} tanesi analiz edilmedi`),
+    el('ul', {}, list.map((m) => el('li', {}, matchLabel(m), ' · ', el('span', { class: 'muted', text: m.analysisError ? `hata: ${m.analysisError}` : 'uygulama o maç bittiğinde kapalıydı' })))),
+    el('p', { class: 'muted', text: 'Oyun sadece son maçın kaydını (temp.rec) tutar; sonraki maç başlayınca önceki kayıt silinir. Her maçın analiz edilmesi için Ayarlar\'dan "Windows açılınca arka planda başlat"ı aç. AoE4World herkese açık API\'sinde sadece maç sonucu (ülke, harita, süre, puan) var; ayrıntılı analiz bu yüzden bilgisayarındaki kayıttan yapılır.' }),
+  );
 }
 
 function matchLabel(m) {
@@ -875,6 +888,9 @@ function renderSettings() {
       el('label', { class: 'check' },
         el('input', { type: 'checkbox', checked: state.overlayEnabled, onchange: (e) => api.updateSettings({ overlayEnabled: e.target.checked }) }),
         'Oyun üstü overlay açık'),
+      el('label', { class: 'check' },
+        el('input', { type: 'checkbox', checked: settings.startWithWindows === true, onchange: async (e) => { settings = await api.updateSettings({ startWithWindows: e.target.checked }); } }),
+        'Windows açılınca arka planda başlat (önerilir: oyun sadece son maçın kaydını tuttuğu için uygulama kapalıyken oynanan maçlar analiz edilemez)'),
       el('label', { class: 'field' }, 'Overlay görünümü',
         el('select', { onchange: async (e) => { settings = await api.updateSettings({ overlayMode: e.target.value }); } },
           el('option', { value: 'simple', selected: settings.overlayMode !== 'detailed', text: 'Sade: sol üstte sadece eksikler ve uyarılar' }),

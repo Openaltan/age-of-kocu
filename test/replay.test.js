@@ -112,3 +112,24 @@ test('bulgular: boşta merkez, geç Feodal ve atlıya karşı mızrakçı eksikl
   assert.match(texts, /danger: Rakip orduda atlı oranı %100, senin ordunda mızrakçı oranı %0/);
   assert.match(texts, /danger: Maç boyunca hiç ekonomi teknolojisi/);
 });
+
+test('kayıt-maç eşleşmesi: tek okunamayan ya da fazla oyuncu analizi düşürmez', () => {
+  const { samePlayers } = require('../src/main/postgame');
+  const n = (...xs) => xs.map((name) => ({ name }));
+  assert.ok(samePlayers(n('a', 'b', 'c', 'd'), n('a', 'b', 'c', 'd')));
+  assert.ok(samePlayers(n('a', 'b', 'c'), n('a', 'b', 'c', 'd'))); // biri okunamadı
+  assert.ok(!samePlayers(n('a', 'b'), n('a', 'b', 'c', 'd'))); // iki eksik: başka maç
+  assert.ok(!samePlayers(n('x', 'y', 'z', 'w'), n('a', 'b', 'c', 'd')));
+});
+
+test('başlıktaki oyuncular: numarası 0 olan gerçek oyuncu okunur, lobi ayarı oyuncu sayılmaz', () => {
+  const { parsePlayers } = require('../src/main/replay');
+  const rec = (name, team, pid, civ) => {
+    const n = Buffer.alloc(4); n.writeUInt32LE(name.length);
+    const t = Buffer.alloc(8); t.writeUInt32LE(team); t.writeUInt32LE(pid, 4);
+    const c = Buffer.alloc(4); c.writeUInt32LE(civ.length);
+    return Buffer.concat([n, Buffer.from(name, 'utf16le'), t, Buffer.from([1]), c, Buffer.from(civ, 'latin1'), Buffer.alloc(8)]);
+  };
+  const buf = Buffer.concat([rec('Quake', 0, 2, 'japanese_ha_sen'), rec('wo非常菜', 0, 0, 'rus'), rec('ā', 0, 0, 'map_size_640'), rec('altanarl', 1, 6, 'japanese')]);
+  assert.deepStrictEqual(parsePlayers(buf, buf.length).map((p) => `${p.name}#${p.pid}`), ['Quake#2', 'wo非常菜#0', 'altanarl#6']);
+});

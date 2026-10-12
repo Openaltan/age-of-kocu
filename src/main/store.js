@@ -6,6 +6,7 @@ const path = require('path');
 const DEFAULT_SETTINGS = {
   profileId: null, // log'dan otomatik bulunur; elle de girilebilir
   overlayEnabled: true,
+  startWithWindows: false, // Windows açılınca arka planda başlat (her maç analiz edilsin)
   overlaySide: 'right',
   buildByCiv: {}, // { zhu_xis_legacy: 'buildId' | 'auto' } — auto: koç rakiplere göre seçer
   learnedCivCodes: {}, // { 'byzantine_ha_mac': 'macedonian_dynasty' }
