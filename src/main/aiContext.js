@@ -104,11 +104,14 @@ function buildCandidates(builds) {
     id: b.id,
     ad: b.name,
     strateji: b.strategy || null,
+    sezon: b.season || null,
+    // Bazı build'ler belirli bir harita için yazılmıştır.
+    harita: b.map || null,
     acilis: b.steps.slice(0, 6).flatMap((s) => s.notes.map(noteText)).join(' / ').slice(0, 400),
   }));
 }
 
-function prematchContext({ scouting, myCiv, build, candidates = null, specials = null, intel = null, matches, loadAnalysis, mapName, localName }) {
+function prematchContext({ scouting, myCiv, build, candidates = null, specials = null, intel = null, squad = null, matches, loadAnalysis, mapName, localName }) {
   const enemyIds = scouting.enemies.map((c) => c.profileId);
   const hist = opponentHistory(enemyIds, matches, loadAnalysis);
   return {
@@ -122,6 +125,8 @@ function prematchContext({ scouting, myCiv, build, candidates = null, specials =
     // Harita ve güncel meta (AoE4World istatistikleri) + internetten araştırma özeti.
     ...(intel?.meta ? { haritaVeMeta: intel.meta } : {}),
     ...(intel?.research ? { internettenArastirma: intel.research.text } : {}),
+    // Ekibimiz: bu maçtaki ikili/üçlü istatistiklerimiz ve alışkanlıklarımız (tarz/hata).
+    ...(squad ? { takimimiz: squad } : {}),
     benimBuild: buildOutline(build),
     takimim: scouting.allies.map((c) => compactCard(c)),
     rakipler: scouting.enemies.map((c) => compactCard(c, hist[c.profileId])),

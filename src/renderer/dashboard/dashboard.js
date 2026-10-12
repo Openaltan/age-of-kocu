@@ -851,6 +851,92 @@ function renderSettings() {
   );
 }
 
+// ---------- Takımımız ----------
+let squadBusy = null; // 'veri' | 'oneri'
+
+async function renderSquad() {
+  const v = views.squad;
+  const { squad, advice } = await api.getSquad();
+  const refresh = async (withAdvice) => {
+    squadBusy = withAdvice ? 'oneri' : 'veri';
+    renderSquad();
+    try {
+      await api.refreshSquad(withAdvice);
+    } catch (err) {
+      alert(`Güncellenemedi: ${err.message.replace(/^.*Error: /, '')}`);
+    } finally {
+      squadBusy = null;
+      if (current === 'squad') renderSquad();
+    }
+  };
+  const ago = (t) => (t ? new Date(t).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : '–');
+  fill(v,
+    el('div', { class: 'match-head' },
+      el('h1', { text: 'Takımımız' }),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn', text: squadBusy === 'veri' ? 'Geçmiş çekiliyor…' : 'Verileri yenile', disabled: Boolean(squadBusy), onclick: () => refresh(false) }),
+        el('button', { class: 'btn primary', text: squadBusy === 'oneri' ? 'Koç öneri hazırlıyor…' : 'Ulus önerilerini yenile', disabled: Boolean(squadBusy) || !state.ai?.available, onclick: () => refresh(true) }),
+      ),
+    ),
+    el('p', { class: 'lead', text: 'Ekibinizin birlikte oynadığı maçlardan (AoE4World geçmişi) ikili ve üçlü dinamikleriniz; maç kayıtlarından her birinizin tarzı ve hataları; bunlara, haritaya ve seviyenizin güncel metasına göre ulus önerileri.' }),
+    el('label', { class: 'check' },
+      el('input', { type: 'checkbox', checked: settings.civAdvice !== false, onchange: async (e) => { settings = await api.updateSettings({ civAdvice: e.target.checked }); } }),
+      'Ulus seçme ekranında öneriyi oyunun üstünde göster (harita ekrandan okunur)'),
+    !squad ? el('div', { class: 'box' }, el('p', { class: 'muted', text: squadBusy ? 'Geçmiş çekiliyor…' : 'Takım verisi henüz yok. "Verileri yenile"ye bas (birkaç saniye sürer).' })) : [
+      el('p', { class: 'muted', text: `Ekip: ${squad.members.map((m) => m.name).join(', ')} · ${squad.report.toplamTakimMaci} takım maçı · seviye: ${squad.rankLevel}${squad.rating ? ` (${squad.rating})` : ''} · güncelleme ${ago(squad.at)}` }),
+      advice?.advice?.takimKimligi ? el('div', { class: 'box' }, el('p', { class: 'ai-lead', text: advice.advice.takimKimligi })) : null,
+      el('h2', { text: 'Birlikte' }),
+      el('div', { class: 'grid' }, [squad.report.uclu, ...squad.report.ikililer].filter(Boolean).map(comboCard)),
+      el('h2', { text: 'Tarzınız ve hatalarınız' }),
+      el('div', { class: 'grid' }, squad.habits.map(habitCard)),
+    ],
+    el('h2', { text: 'Haritaya göre ulus önerisi' }),
+    advice ? civAdviceTable(advice) : el('div', { class: 'box' }, el('p', { class: 'muted', text: state.ai?.available ? 'Henüz öneri yok. "Ulus önerilerini yenile"ye bas (havuzdaki her harita için bir kez hesaplanır, 3 gün saklanır).' : 'Ulus önerisi için Ayarlar › Yapay Zekâ Koç bölümünden anahtar gir.' })),
+  );
+}
+
+function comboCard(c) {
+  const map = (x) => `${x.ad} %${x.kazanma} (${x.mac})`;
+  return el('div', { class: 'box' },
+    el('h3', { text: c.oyuncular.join(' + ') }),
+    el('p', {}, el('b', { text: `${c.mac} maç · %${c.kazanma} kazanma` }), c.sonOn ? el('span', { class: 'muted', text: ` · son 10: ${c.sonOn}` }) : null),
+    el('p', { class: 'muted', text: `Kazanılan maç ortalama ${c.ortalamaKazanilanDk ?? '–'} dk, kaybedilen ${c.ortalamaKaybedilenDk ?? '–'} dk` }),
+    c.sureyeGore.length ? el('p', {}, el('b', { text: 'Süreye göre: ' }), c.sureyeGore.map((s) => `${s.aralik} %${s.kazanma} (${s.mac})`).join(' · ')) : null,
+    c.enIyiHaritalar.length ? el('p', {}, el('b', { text: 'En iyi haritalar: ' }), c.enIyiHaritalar.map(map).join(' · ')) : null,
+    c.enKotuHaritalar.length ? el('p', {}, el('b', { text: 'Zorlandığınız: ' }), c.enKotuHaritalar.map(map).join(' · ')) : null,
+    c.ulusKombinasyonlari.length ? [el('p', {}, el('b', { text: 'Ülke kombinasyonları:' })), el('ul', {}, c.ulusKombinasyonlari.map((u) => el('li', { text: `${u.ad} · ${u.mac} maç %${u.kazanma}` })))] : null,
+  );
+}
+
+function habitCard(h) {
+  return el('div', { class: 'box' },
+    el('h3', { text: h.oyuncu }),
+    h.azVeri ? el('p', { class: 'muted', text: `${h.mac} analizli maç: ${h.mac < 3 ? 'alışkanlık çıkarmak için az (en az 3 gerekir)' : 'az veri, yorumlar kesin değil'}.` }) : null,
+    h.aliskanliklar.length ? el('ul', {}, h.aliskanliklar.map((a) => el('li', {},
+      el('span', { class: `pill ${a.karar.startsWith('hata') ? 'res-loss' : 'gold'}`, text: a.karar.startsWith('hata') ? 'hata' : 'tarz' }), ' ', a.aliskanlik,
+      el('div', { class: 'muted', text: `${a.siklik} maçta${a.galibiyetlerde ? ` · galibiyetlerde ${a.galibiyetlerde}, mağlubiyetlerde ${a.maglubiyetlerde}` : ''}` })))) : null,
+    h.enCokBastigiBirimler?.length ? el('p', { class: 'muted', text: `En çok bastığı: ${h.enCokBastigiBirimler.join(', ')}` }) : null,
+  );
+}
+
+function civAdviceTable(advice) {
+  const members = advice.members.map((m) => m.name);
+  return el('div', { class: 'box cmp-wrap' },
+    el('p', { class: 'muted', text: `${advice.kind === 'rm_3v3' ? '3v3' : '2v2'} · seviye ${advice.rankLevel} · ${new Date(advice.at).toLocaleDateString('tr-TR')} · ulus seçme ekranında harita okununca bu satır oyunun üstünde görünür.` }),
+    el('table', { class: 'cmp' },
+      el('tr', {}, el('th', { text: 'Harita' }), members.map((n) => el('th', { text: n })), el('th', { text: 'Plan' })),
+      advice.advice.haritalar.map((h) => el('tr', {},
+        el('td', {}, el('b', { text: h.harita })),
+        members.map((n) => {
+          const o = h.oneriler.find((x) => x.oyuncu === n);
+          return el('td', { class: 'wrap', title: o?.neden || '' }, o ? [el('b', { text: o.ulus }), el('div', { class: 'muted', text: o.rol })] : '–');
+        }),
+        el('td', { class: 'wrap', text: h.plan }),
+      )),
+    ),
+  );
+}
+
 // ---------- Koça Sor (sohbet) ----------
 let chatBusy = false;
 let chatDraft = '';
@@ -957,7 +1043,7 @@ async function reviewSection() {
   )];
 }
 
-const RENDER = { live: renderLive, analysis: renderAnalysis, builds: renderBuilds, team: renderTeam, chat: renderChat, search: renderSearch, history: renderHistory, screen: () => renderCalibration(views.screen), settings: renderSettings };
+const RENDER = { live: renderLive, analysis: renderAnalysis, builds: renderBuilds, squad: renderSquad, team: renderTeam, chat: renderChat, search: renderSearch, history: renderHistory, screen: () => renderCalibration(views.screen), settings: renderSettings };
 
 // ---------- Olaylar ----------
 api.on('state', (s) => {

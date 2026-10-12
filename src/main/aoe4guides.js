@@ -46,10 +46,27 @@ class BuildLibrary {
     }
   }
 
+  // Seçilen build; seçim yoksa güncel sezonun en yüksek puanlısı.
   async get(guideCode, buildId) {
     const builds = await this.list(guideCode);
-    return builds.find((b) => b.id === buildId) || builds[0] || null;
+    return builds.find((b) => b.id === buildId) || currentSeasonBuilds(builds)[0] || builds[0] || null;
   }
+}
+
+// "Season 13" -> 13
+function seasonNumber(b) {
+  const m = /(\d+)/.exec(String(b?.season || ''));
+  return m ? Number(m[1]) : null;
+}
+
+// Güncel (listedeki en yeni) ve bir önceki sezonun build'leri; eski sezonlar meta dışı kalmış olabilir.
+// Sezonu yazılmamış build'ler tutulur. Hepsi eskiyse liste olduğu gibi döner.
+function currentSeasonBuilds(builds) {
+  const seasons = builds.map(seasonNumber).filter((n) => n != null);
+  if (!seasons.length) return builds;
+  const latest = Math.max(...seasons);
+  const fresh = builds.filter((b) => seasonNumber(b) == null || seasonNumber(b) >= latest - 1);
+  return fresh.length ? fresh : builds;
 }
 
 function idFromSource(source) {
@@ -83,6 +100,7 @@ function normalize(b) {
     author: b.author,
     strategy: b.strategy || '',
     season: b.season || '',
+    map: b.map || null,
     source: b.source,
     steps,
   };
@@ -93,4 +111,4 @@ function parseTime(t) {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
-module.exports = { BuildLibrary, normalize, parseTime };
+module.exports = { BuildLibrary, normalize, parseTime, currentSeasonBuilds, seasonNumber };

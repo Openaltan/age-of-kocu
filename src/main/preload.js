@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('kocu', {
   aiReport: (matchId) => ipcRenderer.invoke('ai:report', matchId),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   getDiagnostics: () => ipcRenderer.invoke('diag:get'),
+  getSquad: () => ipcRenderer.invoke('squad:get'),
+  refreshSquad: (withAdvice) => ipcRenderer.invoke('squad:refresh', withAdvice),
   getReview: () => ipcRenderer.invoke('review:get'),
   runReview: () => ipcRenderer.invoke('review:run'),
   getChat: () => ipcRenderer.invoke('chat:get'),

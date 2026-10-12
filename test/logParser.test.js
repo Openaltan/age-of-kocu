@@ -16,12 +16,14 @@ const sample = fs.readFileSync(path.join(__dirname, 'fixtures', 'warnings-sample
 
 test('yerel profil, maç ID ve oyuncuları çıkarır', () => {
   const { events } = run(sample);
+  // matchFound: eşleşme bulundu (ulus seçme ekranı), yükleme ekranından önce.
   assert.deepStrictEqual(events.map((e) => e.type), [
-    'localProfile', 'matchLoading', 'matchStarted', 'matchEnded', 'matchResult', 'matchResult',
+    'localProfile', 'matchFound', 'matchLoading', 'matchStarted', 'matchEnded', 'matchResult', 'matchResult',
   ]);
   assert.strictEqual(events[0].profileId, 21327806);
+  assert.strictEqual(events[1].matchId, 255410945);
 
-  const loading = events[1].match;
+  const loading = events[2].match;
   assert.strictEqual(loading.matchId, 255410945);
   assert.strictEqual(loading.players.length, 6);
   assert.deepStrictEqual(loading.players[1], {
@@ -51,4 +53,11 @@ test('log saatini bugünün tarihine, gelecekteyse düne yerleştirir', () => {
   const t2 = parseLineTime('(I) [00:10:00.500] [1]: x', now);
   assert.strictEqual(new Date(t2).getDate(), 11);
   assert.strictEqual(parseLineTime('no time here'), null);
+});
+
+test('eşleşme bulundu (ulus seçme ekranı) bir kez bildirilir', () => {
+  const p = new LogParser();
+  const line = (t, id) => `(I) [${t}] [000029208]: AutomatchInternal - OnJoinAutomatch - Server told us join matchID=${id}, hostProfileID=13965124`;
+  const evs = [line('00:38:13.388', 7), line('00:38:19.368', 7), line('00:40:00.000', 8)].flatMap((l) => p.feed(l));
+  assert.deepStrictEqual(evs.map((e) => [e.type, e.matchId]), [['matchFound', 7], ['matchFound', 8]]);
 });

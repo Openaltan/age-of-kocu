@@ -93,6 +93,20 @@ const SCHEMAS = {
     gelecekMac: str,
   }),
   translate: obj({ adimlar: { type: 'array', items: obj({ notlar: strArr }) } }),
+  // Takıma özel ulus önerisi: havuzdaki her harita için her oyuncuya ülke ve rol.
+  civAdvice: obj({
+    takimKimligi: str,
+    haritalar: {
+      type: 'array',
+      items: obj({
+        harita: str,
+        oneriler: { type: 'array', items: obj({ oyuncu: str, ulus: str, rol: str, neden: str }) },
+        plan: str,
+      }),
+    },
+  }),
+  // Ulus seçme ekranında görünen harita.
+  mapPick: obj({ harita: str, ekrandakiAd: str }),
   // Oyuncunun maçlarından gelişim analizi ve ulus önerisi.
   review: obj({
     ozet: str,
@@ -353,6 +367,7 @@ class AiCoach {
 - planAdimlari: maç içinde benim (ben alanındaki oyuncu) için 4-7 zamanlı hatırlatma; dakika (ondalıklı olabilir) ve en fazla 6 kelimelik mesaj.
 - kontraOnerisi: rakip ülke/oyun tarzlarına karşı hangi birimlere ağırlık vermeliyim.
 - takimKoordinasyonu: takım arkadaşlarımla nasıl rol paylaşmalıyız.
+Veride takimimiz varsa (bu maçtaki ekibin birlikte istatistikleri ve alışkanlıkları) planı ve rolleri ona göre kur: "tarz" olan alışkanlıklarımıza uygun plan yap, kazandığımız maç süresine (ör. uzun maçta güçlüysek oyunu uzat) ve bize kazandıran ülke kombinasyonlarına dikkat et.
 Veride haritaVeMeta (AoE4World'ün son yamalardaki istatistikleri: haritanın ortalama maç süresi, bu haritada en çok kazanan ülkeler, ülkelerin kazanma oranları) ve internettenArastirma (güncel strateji özeti) varsa planı, kontrayı ve build'i haritaya ve güncel metaya göre kur; ör. kısa maçların haritasında erken savunma, uzun maçların haritasında ekonomi.
 - buildSecimi: buildSecenekleri verildiyse rakiplere ve haritaya en uygun build'in id'si (listeden aynen); verilmediyse "". Sadece ülkeye değil her rakibin oyun tarzına, bu ülkeyle tecrübesine, ortalama maç süresine ve bize karşı geçmiş maçlarda ağırlıklı ne bastığına (bizeKarsiAgirlikliOrdu, gecmisKarsilasmalar) bak; ör. geçmişte atlıyla erken geldiyse mızrakçı/kule içeren açılışı seç.
 - buildGerekcesi: seçimin tek cümlelik nedeni, hangi rakip verisine dayandığını söyleyerek (ör. "KEYI bize karşı 2 maçta 6. dk atlı baskını yaptı: kule açılışı"); seçim yoksa "".${customText}
@@ -451,6 +466,44 @@ Veri az ise bunu söyle ve buna göre temkinli ol; uydurma.
 Veri:
 ${JSON.stringify(context)}`,
       }],
+    });
+  }
+
+  // Takımın tarzına, ikili/üçlü istatistiklerine ve haritanın (seviyeye göre) metasına uyan ülkeler.
+  civAdvice(context) {
+    return this.ask({
+      effort: 'high',
+      schema: SCHEMAS.civAdvice,
+      content: [{
+        type: 'text',
+        text: `Biz sabit bir ekibiz (uyeler). Sıralı maçta ülkeyi ulus seçme ekranında, haritayı görerek ama rakipleri görmeden seçiyoruz. Aşağıdaki verilerle havuzdaki her harita için her birimize ülke öner.
+Veri:
+- takim: AoE4World geçmişimizden ikili ve üçlü istatistikler (birlikte kazanma oranı, süreye göre başarı, en iyi/kötü haritalar, en çok kazandıran ülke kombinasyonları) ve takım maçlarında her birimizin ülke tercihleri.
+- aliskanliklar: maç kayıtlarından her birimizin alışkanlıkları; "tarz" olanlar bizim oynamak istediğimiz şekildir (inatla yapıyoruz ve kazandığımız maçlarda da var): ÖNERİLERİN BU TARZA UYSUN. "hata" olanları ülke seçimiyle telafi edebiliyorsan söyle.
+- meta: seviyemizdeki (ve bir üst seviyedeki) güncel yama istatistikleri; her harita için o seviyede en çok kazanan ülkeler ve maçların ortalama süresi.
+Kurallar:
+- Önce kendi verimize dayan: bize özel kazandıran kombinasyonlar ve rahat ettiğimiz ülkeler metadan önce gelir; meta, eşit durumda ya da verimiz azken belirleyici olsun.
+- Her harita için her üyeye bir ülke ver: oyuncu (adı aynen), ulus (Türkçe adı), rol (ör. "erken baskı", "ekonomi/geç oyun", "destek/okçu", "su"), neden (tek cümle, hangi veriye dayandığını söyle).
+- plan: o haritada takım olarak tek cümlelik oyun planı.
+- takimKimligi: 2-3 cümle; bizim takım olarak kimliğimiz (nasıl kazanıyoruz, nerede zorlanıyoruz, ikili dinamiklerimiz).
+- Az veri varsa temkinli ol ve bunu nedenlerde belirt; uydurma.
+
+${JSON.stringify(context)}`,
+      }],
+    });
+  }
+
+  // Ulus seçme ekranındaki harita adını okur; maps: havuzdaki haritalar (İngilizce ad, bilinen Türkçe karşılığıyla).
+  identifyMap(image, maps) {
+    return this.ask({
+      effort: 'low',
+      fast: true,
+      schema: SCHEMAS.mapPick,
+      maxTokens: 1000,
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
+        { type: 'text', text: `Bu Age of Empires IV ekranında (büyük olasılıkla ulus seçme ekranı) seçilen haritanın adı yazıyor olabilir. ekrandakiAd: ekranda yazan harita adı (yoksa ""). harita: bu listeden eşleşen adı aynen yaz; eşleşme yoksa ya da ekranda harita yoksa "". Liste: ${JSON.stringify(maps)}` },
+      ],
     });
   }
 

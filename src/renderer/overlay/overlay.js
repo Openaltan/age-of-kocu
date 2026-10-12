@@ -27,7 +27,8 @@ function applyMode(m) {
 }
 
 function renderNotes() {
-  const show = mode === 'simple' && state && (state.phase === 'loading' || state.phase === 'playing') && noteList.length;
+  // Ulus seçme ekranında (civSelect) da: ulus önerisi orada görünür.
+  const show = mode === 'simple' && state && (state.phase === 'loading' || state.phase === 'playing' || state.civSelect) && noteList.length;
   $notes.hidden = !show;
   if (!show) return;
   fill($notes, noteList.map((n) => el('div', { class: `note-pill lvl-${n.level}`, text: n.text })));

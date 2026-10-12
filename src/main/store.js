@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   coachMode: 'normal', // normal: uyarı ve öneri · yonet: koç her an sıralı komut verir (oyuncu uygular)
   aiReport: true, // maç sonu YZ raporu
   aiResearch: true, // maç öncesi internetten harita/meta araştırması (Gemini + Google Arama)
+  civAdvice: true, // ulus seçme ekranında takıma özel ulus önerisi
   aiTranslate: true, // build notlarını Türkçeleştir
   overlayMode: 'simple', // simple: sol üstte sadece notlar · detailed: build paneli, kartlar, YZ paneli
   teamSyncEnabled: true, // maçta takım arkadaşlarıyla otomatik bağlan

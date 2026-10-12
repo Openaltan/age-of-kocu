@@ -46,7 +46,11 @@ class LogParser {
       this.localProfileId = Number(m[1]);
       events.push({ type: 'localProfile', profileId: this.localProfileId });
     } else if ((m = RE.join.exec(line))) {
-      this.pendingMatchId = Number(m[1]);
+      // Eşleşme bulundu: ulus seçme ekranı açılıyor (harita görünür, rakipler henüz görünmez).
+      // Sunucu aynı maçı ikinci kez söyleyebilir; bir kez bildirilir.
+      const id = Number(m[1]);
+      if (id !== this.pendingMatchId) events.push({ type: 'matchFound', matchId: id, at });
+      this.pendingMatchId = id;
     } else if (RE.scenario.test(line)) {
       this.match = {
         matchId: this.pendingMatchId,
