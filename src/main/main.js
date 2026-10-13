@@ -251,6 +251,7 @@ async function onMatchLoading(match, { simulated = false } = {}) {
       return null;
     });
     if (state.match !== match) return;
+    scout.addMapInsights(state.scouting, state.intel?.meta?.harita?.en);
     pushState();
     if (!liveOn() || !aiOn('aiPrematch')) autoBuildByRule();
     runPrematch(match);

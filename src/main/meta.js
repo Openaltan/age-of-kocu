@@ -36,6 +36,7 @@ function metaSummary({ kind, patch = null, mySlug, enemySlugs = [], allySlugs = 
     tur: kind,
     yama: patch,
     harita: map ? {
+      en: map.en || null,
       ad: map.en ? `${map.local}${map.en !== map.local ? ` (${map.en})` : ''}` : map.local,
       ortalamaMacDk: minutes(map.stats?.duration_median),
       enCokKazananUlke: map.stats?.highest_win_rate_civilization ? name(map.stats.highest_win_rate_civilization) : null,

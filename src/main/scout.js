@@ -5,6 +5,8 @@ const civs = require('./civs');
 
 const SHORT_GAME_SEC = 15 * 60;
 const LONG_GAME_SEC = 30 * 60;
+const RECENT_GAMES = 20; // "son dönem": en yeni 20 maç
+const SCOUT_PAGES = 4; // rakibe bakılan geçmiş: 4 × 50 = 200 maç
 
 // Oyunun türüne göre hangi reytingin gösterileceği.
 function ratingModes(kind) {
@@ -28,7 +30,7 @@ function analyzeGames(profileId, games) {
   for (const g of games) {
     const me = g.teams.flat().map((t) => t.player).find((p) => p.profile_id === profileId);
     if (!me || (me.result !== 'win' && me.result !== 'loss')) continue;
-    rows.push({ win: me.result === 'win', civ: me.civilization, duration: g.duration || 0, kind: g.kind, input: me.input_type });
+    rows.push({ win: me.result === 'win', civ: me.civilization, duration: g.duration || 0, kind: g.kind, input: me.input_type, map: g.map || null, at: Date.parse(g.started_at || g.updated_at || '') || null });
   }
 
   const overall = bucket();
@@ -60,7 +62,25 @@ function analyzeGames(profileId, games) {
   }
 
   const losses = overall.n - overall.wins;
+  // Son dönem: en yeni maçlardaki kazanma oranı ve en çok oynadığı ülke (ana ülkesi değişmiş olabilir).
+  const recentRows = rows.slice(0, RECENT_GAMES);
+  const recentCiv = new Map();
+  for (const r of recentRows) recentCiv.set(r.civ, (recentCiv.get(r.civ) || 0) + 1);
+  const recentTop = [...recentCiv.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+  const byMap = new Map();
+  for (const r of rows) {
+    if (!r.map) continue;
+    if (!byMap.has(r.map)) byMap.set(r.map, bucket());
+    const m = byMap.get(r.map);
+    m.n += 1;
+    m.wins += r.win;
+  }
+  const lastAt = rows.find((r) => r.at)?.at || null;
   return {
+    recent: { games: recentRows.length, winRate: pct(recentRows.filter((r) => r.win).length, recentRows.length), topCiv: recentTop ? { slug: recentTop[0], tr: civs.trName(recentTop[0]), games: recentTop[1] } : null },
+    byMap: Object.fromEntries([...byMap.entries()].map(([name, b]) => [name, { games: b.n, winRate: pct(b.wins, b.n) }])),
+    daysSinceLast: lastAt ? Math.floor((Date.now() - lastAt) / 86400000) : null,
+  
     games: overall.n,
     winRate: pct(overall.wins, overall.n),
     topCivs: [...byCiv.entries()]
@@ -116,6 +136,18 @@ function insights(stats, civSlug) {
     }
   }
 
+  // Daha geniş geçmiş: son dönem formu ve ülkesi, uzun ara.
+  if (stats.recent && stats.games >= 40 && stats.recent.games >= 15 && stats.winRate != null) {
+    const d = stats.recent.winRate - stats.winRate;
+    if (d >= 15) add('danger', `Son dönemde yükselişte: son ${stats.recent.games} maçta %${stats.recent.winRate} (genelde %${stats.winRate}).`);
+    else if (d <= -15) add('chance', `Son dönemde düşüşte: son ${stats.recent.games} maçta %${stats.recent.winRate} (genelde %${stats.winRate}).`);
+  }
+  const rt = stats.recent?.topCiv;
+  if (rt && rt.games >= 8 && stats.topCivs[0] && rt.slug !== stats.topCivs[0].slug) {
+    add('info', `Son dönemde ağırlıklı ${rt.tr} oynuyor (son ${stats.recent.games} maçın ${rt.games}'i).`);
+  }
+  if (stats.daysSinceLast != null && stats.daysSinceLast >= 30) add('chance', `${stats.daysSinceLast} gündür maç oynamamış; paslanmış olabilir.`);
+
   if (stats.streak <= -3) add('chance', `Üst üste ${-stats.streak} maç kaybetmiş. Moralsiz olabilir.`);
   if (stats.streak >= 3) add('danger', `Formda: üst üste ${stats.streak} galibiyet.`);
   if (stats.controller) add('chance', 'Kontrolcüyle oynuyor: aynı anda birkaç cepheden taciz ona zor gelir.');
@@ -153,7 +185,10 @@ async function scoutPlayer(p, kind) {
   };
   if (!p.profileId) return card;
   try {
-    const [player, games] = await Promise.all([aoe4world.player(p.profileId), aoe4world.games(p.profileId, { limit: 50 })]);
+    const [player, games] = await Promise.all([
+      aoe4world.player(p.profileId),
+      aoe4world.allGames(p.profileId, { maxPages: SCOUT_PAGES }).then((g) => (g.length ? g : aoe4world.games(p.profileId, { limit: 50 }))),
+    ]);
     card.name = card.name || player.name;
     card.rating = pickRating(player, kind);
     card.country = player.country || null;
@@ -184,4 +219,19 @@ async function scoutMatch(match, localProfileId) {
   return { matchId: match.matchId, kind, myTeam, allies, enemies };
 }
 
-module.exports = { analyzeGames, insights, scoutPlayer, scoutMatch, pickRating };
+// Harita belli olunca (yükleme ekranında meta gelince) rakiplerin bu haritadaki başarısı eklenir.
+function addMapInsights(scouting, mapEn) {
+  if (!scouting || !mapEn) return 0;
+  let added = 0;
+  for (const c of scouting.enemies) {
+    const m = c.stats?.byMap?.[mapEn];
+    if (!m || m.games < 4) continue;
+    if (m.winRate >= 60) c.insights.push({ level: 'danger', text: `Bu haritada güçlü: ${m.games} maçta %${m.winRate}.` });
+    else if (m.winRate <= 35) c.insights.push({ level: 'chance', text: `Bu haritada zayıf: ${m.games} maçta %${m.winRate}.` });
+    else continue;
+    added += 1;
+  }
+  return added;
+}
+
+module.exports = { addMapInsights, analyzeGames, insights, scoutPlayer, scoutMatch, pickRating };
